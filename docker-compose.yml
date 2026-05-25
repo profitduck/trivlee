@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: trivia-duel-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trivia_duel
+    ports:
+      - "54322:5432"
+    volumes:
+      - trivia-duel-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d trivia_duel"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  trivia-duel-pgdata:
