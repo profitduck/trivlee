@@ -11,6 +11,7 @@
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d && sleep 3 && npm run db:migrate && npm run db:seed",
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
+    "db:migrate:prod": "node scripts/migrate.mjs",
     "db:seed": "node --env-file=.env.local scripts/seed.mjs"
   },
   "dependencies": {

@@ -30,7 +30,10 @@ export default async function SignInPage({
   const existing = await getCurrentUser();
   if (existing) redirect(next);
 
-  const users = await getSeededUsers();
+  // Dev-only quick-switch buttons. Hidden in production for safety since
+  // anyone could click "Alice" and be signed in as her.
+  const showQuickSwitch = process.env.NODE_ENV !== "production";
+  const users = showQuickSwitch ? await getSeededUsers() : [];
 
   return (
     <main className="flex-1 bg-confetti">

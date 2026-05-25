@@ -8,11 +8,20 @@ const MIGRATIONS_DIR = join(__dirname, "..", "db", "migrations");
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
-  console.error("DATABASE_URL is not set. Did you forget .env.local?");
+  console.error(
+    "DATABASE_URL is not set. Locally: did you forget .env.local? In production: did you forget to link the Postgres service?"
+  );
   process.exit(1);
 }
 
-const client = new pg.Client({ connectionString });
+// Managed Postgres (Railway, Neon, etc.) requires SSL but with a self-signed
+// cert chain. Local brew Postgres doesn't use SSL. Toggle based on NODE_ENV.
+const ssl =
+  process.env.NODE_ENV === "production" && process.env.PGSSL !== "false"
+    ? { rejectUnauthorized: false }
+    : undefined;
+
+const client = new pg.Client({ connectionString, ssl });
 await client.connect();
 
 try {
