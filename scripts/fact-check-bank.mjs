@@ -416,13 +416,47 @@ function parseStrictJson(raw) {
   try {
     return JSON.parse(trimmed);
   } catch {
-    const firstBrace = trimmed.search(/[{\[]/);
-    const lastBrace = Math.max(trimmed.lastIndexOf("}"), trimmed.lastIndexOf("]"));
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+    const balanced = firstBalancedJsonBlock(trimmed);
+    if (balanced) {
+      return JSON.parse(balanced);
     }
     throw new Error(`Model returned non-JSON output. First 200 chars: ${raw.slice(0, 200)}`);
   }
+}
+
+function firstBalancedJsonBlock(text) {
+  const start = text.search(/[{\[]/);
+  if (start < 0) return null;
+  const stack = [];
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      stack.push(ch);
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      const open = stack.pop();
+      if ((ch === "}" && open !== "{") || (ch === "]" && open !== "[")) return null;
+      if (stack.length === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 
 function summarizeError(err) {

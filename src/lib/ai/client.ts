@@ -35,12 +35,12 @@ export function parseStrictJson(raw: string): unknown {
     return JSON.parse(trimmed);
   } catch {
     // The model sometimes prefixes with a sentence even when told not to.
-    // Pull the largest balanced {...} or [...] block.
-    const firstBrace = trimmed.search(/[{\[]/);
-    const lastBrace = Math.max(trimmed.lastIndexOf("}"), trimmed.lastIndexOf("]"));
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
+    // Pull the first balanced {...} or [...] block so trailing commentary
+    // after valid JSON doesn't poison the parse.
+    const balanced = firstBalancedJsonBlock(trimmed);
+    if (balanced) {
       try {
-        return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+        return JSON.parse(balanced);
       } catch {
         // fall through
       }
@@ -49,4 +49,39 @@ export function parseStrictJson(raw: string): unknown {
       `Model returned non-JSON output. First 200 chars: ${raw.slice(0, 200)}`
     );
   }
+}
+
+function firstBalancedJsonBlock(text: string): string | null {
+  const start = text.search(/[{\[]/);
+  if (start < 0) return null;
+  const stack: string[] = [];
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      stack.push(ch);
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      const open = stack.pop();
+      if ((ch === "}" && open !== "{") || (ch === "]" && open !== "[")) return null;
+      if (stack.length === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
 }
