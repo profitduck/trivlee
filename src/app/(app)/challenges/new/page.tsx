@@ -104,11 +104,11 @@ export default async function NewChallengePage({
         </Link>
       </Button>
 
-      <div className="mb-8">
-        <h1 className="font-display text-4xl font-extrabold tracking-tighter">
-          {defaults ? "Retry match" : "New match"}
+      <div className="mb-8 anim-fade-up">
+        <h1 className="font-display text-5xl font-extrabold tracking-tighter">
+          <span className="text-gradient-warm">{defaults ? "Retry match" : "New match"}</span>
         </h1>
-        <p className="text-muted-foreground mt-2">
+        <p className="text-muted-foreground mt-2 text-base">
           {defaults
             ? "We pre-filled your previous settings. Tweak anything you want, then create."
             : "Pick a topic, dial the difficulty, share the invite link with anyone you want to play."}

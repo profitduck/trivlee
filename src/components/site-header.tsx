@@ -8,13 +8,13 @@ import { signOutAction } from "@/lib/auth-actions";
 export function SiteHeader({ user }: { user: SessionUser }) {
   const initials = (user.display_name ?? user.username).slice(0, 2).toUpperCase();
   return (
-    <header className="border-b bg-card/60 backdrop-blur">
+    <header className="border-b bg-card/70 backdrop-blur-md sticky top-0 z-40">
       <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+        <Link href="/dashboard" className="flex items-center gap-2 group">
+          <div className="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-accent text-primary-foreground shadow-md shadow-primary/30 group-hover:shadow-lg group-hover:shadow-primary/40 group-hover:rotate-3 transition-all duration-200">
             <Swords className="size-5" />
           </div>
-          <span className="font-display text-xl font-bold tracking-tight">
+          <span className="font-display text-xl font-extrabold tracking-tight">
             Trivlee
           </span>
         </Link>

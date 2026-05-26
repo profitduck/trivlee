@@ -122,8 +122,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* Slow-moving aurora behind every page. Four large radial blobs animate
+     across the viewport over 20-30s — feels alive without ever distracting.
+     `background-attachment: fixed` keeps it stable as content scrolls. */
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background-color: var(--background);
+    background-image:
+      radial-gradient(circle at 15% 20%, oklch(0.88 0.17 95 / 0.35) 0, transparent 35%),
+      radial-gradient(circle at 85% 80%, oklch(0.65 0.21 25 / 0.25) 0, transparent 40%),
+      radial-gradient(circle at 50% 50%, oklch(0.72 0.16 195 / 0.18) 0, transparent 45%),
+      radial-gradient(circle at 75% 15%, oklch(0.55 0.18 285 / 0.18) 0, transparent 40%);
+    background-attachment: fixed;
+    background-size: 200% 200%;
+    animation: aurora 28s ease-in-out infinite;
   }
   html {
     @apply font-sans;
@@ -134,6 +146,23 @@
   }
 }
 
+@keyframes aurora {
+  0%, 100% { background-position: 0% 0%; }
+  25%      { background-position: 50% 100%; }
+  50%      { background-position: 100% 50%; }
+  75%      { background-position: 0% 100%; }
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.65 0.21 25 / 0.45), 0 8px 32px -8px oklch(0.65 0.21 25 / 0.6); }
+  50%      { box-shadow: 0 0 0 8px oklch(0.65 0.21 25 / 0), 0 12px 40px -8px oklch(0.65 0.21 25 / 0.8); }
+}
+
+@keyframes fadeUp {
+  0%   { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
 @layer utilities {
   .font-display {
     font-family: var(--font-display);
@@ -142,6 +171,46 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Gradient text — used for hero stat numbers. Two-color sweep that picks up
+     the primary + chart-3 (yellow accent) for a warm, gamified feel. */
+  .text-gradient-warm {
+    background: linear-gradient(135deg, oklch(0.65 0.21 25) 0%, oklch(0.88 0.17 95) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+  .text-gradient-cool {
+    background: linear-gradient(135deg, oklch(0.72 0.16 195) 0%, oklch(0.55 0.18 285) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* Lift+tilt on hover — small, snappy. Apply to interactive cards. */
+  .hover-lift {
+    transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 220ms ease;
+    transform-origin: center;
+  }
+  .hover-lift:hover {
+    transform: translateY(-3px) scale(1.01);
+    box-shadow: 0 18px 40px -16px oklch(0.65 0.21 25 / 0.25);
+  }
+
+  /* Pulsing glow for the primary CTA. Keeps the eye drawn toward the
+     highest-priority action on the page without being annoying. */
+  .btn-glow {
+    animation: glowPulse 2.8s ease-in-out infinite;
+  }
+
+  /* Staggered fade-up for first-paint section entry. Use with inline
+     animation-delay so children stagger naturally. */
+  .anim-fade-up {
+    animation: fadeUp 500ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  }
+
   .bg-confetti {
     background-image:
       radial-gradient(circle at 20% 10%, oklch(0.88 0.17 95 / 0.15) 0, transparent 25%),

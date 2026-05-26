@@ -214,15 +214,19 @@ export default async function LeaderboardPage({
       </header>
 
       {me && (
-        <Card className="border-primary/40 bg-primary/5">
-          <CardContent className="p-5 flex items-center gap-4">
+        <Card className="border-2 border-primary/40 bg-gradient-to-br from-primary/10 via-accent/5 to-card overflow-hidden relative">
+          <div className="pointer-events-none absolute -top-12 -right-12 size-40 rounded-full bg-primary/25 blur-3xl" />
+          <CardContent className="relative p-5 flex items-center gap-4">
             <RankBadge rank={myIdx + 1} highlight />
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">
                 Your rank
               </p>
-              <p className="font-display text-lg font-bold mt-0.5">
-                {me.total_points.toFixed(1)} pts · {me.wins} wins · {me.accuracy_pct}% accuracy
+              <p className="font-display text-3xl font-extrabold mt-1">
+                <span className="text-gradient-warm">#{myIdx + 1}</span>
+                <span className="text-sm font-medium text-muted-foreground ml-2 align-middle">
+                  · {me.total_points.toFixed(0)} pts · {me.wins} wins · {me.accuracy_pct}%
+                </span>
               </p>
             </div>
           </CardContent>
@@ -300,10 +304,15 @@ function LeaderboardRow({
         </div>
       </div>
       <div className="text-right shrink-0">
-        <p className="font-display text-xl font-bold leading-none tabular-nums">
+        <p
+          className={cn(
+            "font-display text-2xl font-extrabold leading-none tabular-nums",
+            rank <= 3 ? "text-gradient-warm" : ""
+          )}
+        >
           {row.total_points.toFixed(0)}
         </p>
-        <p className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-semibold">
+        <p className="text-[10px] text-muted-foreground mt-1 uppercase tracking-widest font-bold">
           pts
         </p>
       </div>

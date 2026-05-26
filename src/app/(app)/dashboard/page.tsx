@@ -3,6 +3,7 @@ import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight, AlertTriangle, Target
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import {
@@ -171,7 +172,7 @@ export default async function DashboardPage() {
             {greetingHeadline(user.display_name ?? user.username, stats.matches_played, stats.wins)}
           </h1>
         </div>
-        <Button asChild size="lg" className="gap-2 shadow-lg hover:shadow-primary/40 transition-shadow">
+        <Button asChild size="lg" className="gap-2 btn-glow font-semibold">
           <Link href="/challenges/new">
             <Plus className="size-5" />
             New match
@@ -180,43 +181,55 @@ export default async function DashboardPage() {
       </section>
 
       {stats.matches_played > 0 && (
-        <section>
+        <section className="anim-fade-up" style={{ animationDelay: "60ms" }}>
           <Link href="/leaderboard" className="block group">
-            <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-card to-card transition hover:border-primary/40 hover:shadow-lg">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+            <Card className="hover-lift border-2 border-primary/30 bg-gradient-to-br from-primary/10 via-accent/5 to-card overflow-hidden relative">
+              {/* Decorative glow pucks in the corners — visual richness with
+                  zero layout impact. Pointer-events:none so they never block clicks. */}
+              <div className="pointer-events-none absolute -top-20 -right-20 size-48 rounded-full bg-primary/20 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-16 -left-16 size-40 rounded-full bg-accent/30 blur-3xl" />
+              <CardContent className="relative p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground font-bold">
                     Your stats
                   </p>
-                  <span className="text-xs text-primary group-hover:underline inline-flex items-center gap-1">
+                  <span className="text-xs text-primary group-hover:translate-x-0.5 transition-transform inline-flex items-center gap-1 font-semibold">
                     Leaderboard <ArrowRight className="size-3" />
                   </span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-5">
                   <StatPill
                     icon={<Crown className="size-4" />}
                     label="Points"
                     value={stats.total_points.toFixed(0)}
+                    accent="warm"
                   />
                   <StatPill
                     icon={<Trophy className="size-4" />}
                     label="Wins"
                     value={String(stats.wins)}
+                    accent="warm"
                   />
                   <StatPill
                     icon={<Target className="size-4" />}
                     label="Accuracy"
                     value={`${stats.accuracy_pct}%`}
+                    accent="cool"
                   />
                   <StatPill
                     icon={<Flame className="size-4" />}
                     label="Matches"
                     value={String(stats.matches_played)}
+                    accent="cool"
                   />
                 </div>
                 {stats.global_rank !== null && (
-                  <p className="mt-3 pt-3 border-t text-xs text-muted-foreground">
-                    Currently ranked <strong className="text-foreground">#{stats.global_rank}</strong> globally.
+                  <p className="mt-4 pt-3 border-t border-primary/15 text-xs text-muted-foreground">
+                    Currently ranked{" "}
+                    <strong className="font-display text-base text-gradient-warm">
+                      #{stats.global_rank}
+                    </strong>{" "}
+                    globally.
                   </p>
                 )}
               </CardContent>
@@ -400,26 +413,36 @@ function pickByDay<T>(arr: readonly T[]): T {
 }
 
 /**
- * Compact stat tile for the lifetime-stats card. Different shape from
- * StatCard — denser, no card chrome, intended for use inside the gradient
- * highlight card.
+ * Compact stat tile for the lifetime-stats card. Larger gradient-tinted
+ * number for game-feel impact. The accent prop switches between the warm
+ * (red→yellow) and cool (teal→purple) palettes so the row of stats has
+ * visual rhythm rather than uniformity.
  */
 function StatPill({
   icon,
   label,
   value,
+  accent = "warm",
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  accent?: "warm" | "cool";
 }) {
   return (
-    <div className="space-y-1">
-      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+    <div className="space-y-1.5">
+      <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
         {icon}
         {label}
       </span>
-      <p className="font-display text-2xl font-bold leading-none tabular-nums">{value}</p>
+      <p
+        className={cn(
+          "font-display text-4xl font-extrabold leading-none tabular-nums",
+          accent === "warm" ? "text-gradient-warm" : "text-gradient-cool"
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
 }
@@ -456,7 +479,7 @@ function ChallengeCard({ c }: { c: ChallengeRow }) {
   const roleLabel = c.is_challenger ? "host" : c.challenger_username ? `vs @${c.challenger_username}` : "";
   return (
     <Link href={`/challenges/${c.id}`} className="block">
-      <Card className="transition hover:shadow-md hover:border-primary/40 h-full">
+      <Card className="hover-lift h-full">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
             <CardTitle className="text-base font-display">{c.topic}</CardTitle>

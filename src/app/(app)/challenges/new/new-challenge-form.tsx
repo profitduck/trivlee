@@ -322,9 +322,16 @@ export function NewChallengeForm({ defaults }: { defaults?: RetryDefaults } = {}
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-end gap-3 sticky bottom-4">
-        <Button type="submit" size="lg" disabled={pending || topic.trim().length < 2}
-          className="gap-2 shadow-lg">
+      <div className="flex items-center justify-end gap-3 sticky bottom-4 z-10">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={pending || topic.trim().length < 2}
+          className={cn(
+            "gap-2 font-semibold text-base px-7",
+            !pending && topic.trim().length >= 2 && "btn-glow"
+          )}
+        >
           {pending ? (
             <>
               <Loader2 className="size-5 animate-spin" />

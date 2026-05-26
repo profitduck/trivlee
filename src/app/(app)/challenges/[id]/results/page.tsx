@@ -215,12 +215,12 @@ export default async function ResultsPage({
         </Link>
       </Button>
 
-      <header className="text-center space-y-3">
-        <Badge variant="secondary">{match.topic}</Badge>
-        <h1 className="font-display text-5xl font-extrabold tracking-tighter">
+      <header className="text-center space-y-3 anim-fade-up">
+        <Badge variant="secondary" className="text-xs uppercase tracking-widest font-bold">{match.topic}</Badge>
+        <h1 className="font-display text-5xl sm:text-6xl font-extrabold tracking-tighter leading-[1.05]">
           {youAreInTopTie ? (
-            <span className="inline-flex items-center gap-3">
-              <Crown className="size-10 text-primary" />
+            <span className="inline-flex items-center gap-3 text-gradient-warm">
+              <Crown className="size-12 text-primary drop-shadow-md" />
               {winners.length === 2 ? "You tied for first!" : `Tied ${winners.length}-way for first!`}
             </span>
           ) : isTopTied ? (
@@ -229,19 +229,25 @@ export default async function ResultsPage({
               {winners.map((w) => displayName(w.row)).join(" & ")}
             </span>
           ) : youWinSolo ? (
-            <span className="inline-flex items-center gap-3">
-              <Crown className="size-10 text-primary" />
+            <span className="inline-flex items-center gap-3 text-gradient-warm">
+              <Crown className="size-12 text-primary drop-shadow-md" />
               You win!
             </span>
           ) : board.length === 1 ? (
             "Match complete"
           ) : (
-            `${displayName(topRow.row)} wins.`
+            <>
+              <span className="text-gradient-warm">{displayName(topRow.row)}</span> wins.
+            </>
           )}
         </h1>
         {myEntry && board.length > 1 && !youAreInTopTie && (
-          <p className="text-muted-foreground">
-            You finished {ordinal(myRank)} of {board.length}
+          <p className="text-muted-foreground text-base">
+            You finished{" "}
+            <strong className="text-foreground font-display text-lg">
+              {ordinal(myRank)}
+            </strong>{" "}
+            of {board.length}
             {myEntry.tied && " (tied)"}.
           </p>
         )}

@@ -199,17 +199,17 @@ export function PlayCard(props: PlayCardProps) {
 
       <header className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-muted-foreground">{props.topic}</p>
-          <p className="font-display text-lg font-semibold">
-            Question {props.position}{" "}
-            <span className="text-muted-foreground font-normal">of {props.total}</span>
+          <p className="text-xs uppercase tracking-widest text-muted-foreground font-bold">{props.topic}</p>
+          <p className="font-display text-2xl font-extrabold mt-0.5">
+            <span className="text-gradient-warm">Q{props.position}</span>
+            <span className="text-muted-foreground font-medium text-base"> / {props.total}</span>
           </p>
         </div>
         {props.timeLimitS && secondsLeft != null && feedback == null && (
           <div
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-semibold tabular-nums",
-              secondsLeft <= 5 ? "bg-destructive/10 text-destructive" : "bg-muted"
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono font-bold tabular-nums text-lg",
+              secondsLeft <= 5 ? "bg-destructive/15 text-destructive animate-pulse" : "bg-muted"
             )}
           >
             <Clock className="size-4" />
@@ -218,7 +218,7 @@ export function PlayCard(props: PlayCardProps) {
         )}
       </header>
 
-      <Card className="border-2">
+      <Card className="border-2 shadow-xl shadow-primary/5">
         <CardContent className="p-6 sm:p-8 space-y-6">
           <p className="font-display text-2xl sm:text-3xl font-bold leading-tight text-balance">
             {props.questionText}
@@ -226,22 +226,29 @@ export function PlayCard(props: PlayCardProps) {
 
           {!feedback && props.perQuestionFormat === "multiple_choice" && props.options && (
             <div className="grid gap-2">
-              {props.options.map((opt) => (
+              {props.options.map((opt, idx) => (
                 <Button
                   key={opt}
                   variant="outline"
                   size="lg"
                   className={cn(
-                    "h-auto py-4 text-base whitespace-normal justify-start text-left",
-                    selected === opt && "ring-2 ring-primary border-primary"
+                    "h-auto py-4 px-5 text-base whitespace-normal justify-start text-left gap-3",
+                    "border-2 transition-all duration-150",
+                    "hover:border-primary/60 hover:bg-primary/5 hover:translate-x-1",
+                    selected === opt && "ring-2 ring-primary border-primary bg-primary/10 scale-[1.01]",
+                    "anim-fade-up"
                   )}
+                  style={{ animationDelay: `${idx * 60}ms` }}
                   onClick={() => {
                     setSelected(opt);
                     handleSubmit(opt);
                   }}
                   disabled={pending}
                 >
-                  {opt}
+                  <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground shrink-0 size-7 rounded-md bg-muted grid place-items-center">
+                    {String.fromCharCode(65 + idx)}
+                  </span>
+                  <span className="flex-1">{opt}</span>
                 </Button>
               ))}
             </div>
