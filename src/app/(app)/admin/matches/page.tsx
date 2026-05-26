@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { AdminDeleteMatchButton } from "./admin-match-actions";
 
 interface AdminMatchRow {
   id: string;
@@ -182,7 +183,7 @@ function MatchRow({ m }: { m: AdminMatchRow }) {
           </details>
         )}
 
-        <div className="flex gap-2 text-xs">
+        <div className="flex gap-2 text-xs flex-wrap items-center">
           <Button asChild variant="ghost" size="sm" className="h-7 text-xs gap-1">
             <Link href={`/challenges/${m.id}`}>
               <Eye className="size-3" />
@@ -197,6 +198,9 @@ function MatchRow({ m }: { m: AdminMatchRow }) {
               </Link>
             </Button>
           )}
+          <div className="ml-auto">
+            <AdminDeleteMatchButton matchId={m.id} />
+          </div>
         </div>
       </CardContent>
     </Card>

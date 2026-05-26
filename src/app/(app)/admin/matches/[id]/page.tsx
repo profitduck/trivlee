@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { AdminBankActions } from "../admin-question-actions";
 
 interface MatchHeader {
   id: string;
@@ -28,6 +29,7 @@ interface QuestionRow {
   type: string;
   per_question_format: string;
   bank_question_id: string | null;
+  bank_hidden: boolean | null;
   attempt_count: number;
   correct_attempt_count: number;
 }
@@ -54,10 +56,12 @@ async function getQuestions(challengeId: string): Promise<QuestionRow[]> {
        q.answer_aliases, q.distractors, q.source_hint,
        q.type::text AS type, q.per_question_format::text AS per_question_format,
        q.bank_question_id,
+       qb.hidden AS bank_hidden,
        (SELECT COUNT(*) FROM attempts a WHERE a.question_id = q.id) AS attempt_count,
        (SELECT COUNT(*) FROM attempts a WHERE a.question_id = q.id AND a.is_correct = true) AS correct_attempt_count
      FROM question_sets qs
      JOIN questions q ON q.set_id = qs.id
+     LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
      WHERE qs.challenge_id = $1
      ORDER BY q.position`,
     [challengeId]
@@ -122,8 +126,13 @@ function QuestionCard({ q }: { q: QuestionRow }) {
             <Badge variant="outline" className="text-[10px]">
               {q.per_question_format === "multiple_choice" ? "MC" : "free text"}
             </Badge>
-            {q.bank_question_id && (
+            {q.bank_question_id && !q.bank_hidden && (
               <Badge variant="secondary" className="text-[10px]">in bank</Badge>
+            )}
+            {q.bank_question_id && q.bank_hidden && (
+              <Badge variant="outline" className="text-[10px] border-destructive/40 text-destructive">
+                bank: hidden
+              </Badge>
             )}
           </div>
           {correctPct !== null && (
@@ -157,6 +166,18 @@ function QuestionCard({ q }: { q: QuestionRow }) {
           <p className="text-xs text-muted-foreground border-t pt-2">
             <span className="font-semibold">Source:</span> {q.source_hint}
           </p>
+        )}
+
+        {q.bank_question_id && (
+          <div className="border-t pt-2 flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[10px] text-muted-foreground font-mono">
+              bank id: {q.bank_question_id.slice(0, 8)}…
+            </span>
+            <AdminBankActions
+              bankQuestionId={q.bank_question_id}
+              currentlyHidden={q.bank_hidden ?? false}
+            />
+          </div>
         )}
       </CardContent>
     </Card>
