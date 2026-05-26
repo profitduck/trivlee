@@ -1,7 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 
-const VERIFIER_MODEL = "claude-haiku-4-5";
+const VERIFIER_MODEL = "claude-sonnet-4-6";
 
 const VERIFIER_SYSTEM_PROMPT = `You are a strict trivia fact-checker. You receive a candidate question with its claimed correct answer (and distractors, if multiple-choice) and the writer's stated source. Your job is to catch three failure modes:
 
@@ -52,12 +52,13 @@ function getClient(): Anthropic | null {
 }
 
 /**
- * Fact-check a generated question with Haiku. Returns null when the verifier
+ * Fact-check a generated question with Sonnet. Returns null when the verifier
  * isn't available (no API key, mock mode); callers should treat that as a
  * pass-through (no extra filtering).
  *
- * Cost: ~$0.001 per question (Haiku 4.5, ~400 input + ~50 output tokens with
- * prompt caching on the system prompt).
+ * Cost: ~$0.005 per question (Sonnet 4.6, ~400 input + ~50 output tokens with
+ * prompt caching on the system prompt). Roughly 5x Haiku but with materially
+ * stronger knowledge — fewer false-pass and false-fail decisions.
  */
 export async function verifyQuestion(
   input: VerifyInput

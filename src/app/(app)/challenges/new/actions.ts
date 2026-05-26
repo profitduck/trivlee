@@ -190,10 +190,13 @@ export async function createChallenge(input: CreateChallengeInput) {
       aiQuestions = aiQuestions.filter((q, i) => {
         const v = verifications[i];
         if (v === null) return true; // verifier unavailable, pass-through
-        if (!v.accurate || v.confidence === "low") {
+        // Strict mode: only keep questions the verifier rates accurate AND high-confidence.
+        // Medium/low confidence both get dropped — we'd rather show fewer questions
+        // than ship something the verifier wasn't sure about.
+        if (!v.accurate || v.confidence !== "high") {
           dropped.push({ question: q.question.slice(0, 80), reason: v.reason });
           console.warn(
-            `[verifier] dropped: "${q.question.slice(0, 60)}…" — ${v.reason}`
+            `[verifier] dropped (accurate=${v.accurate}, confidence=${v.confidence}): "${q.question.slice(0, 60)}…" — ${v.reason}`
           );
           return false;
         }
