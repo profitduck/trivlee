@@ -1,4 +1,4 @@
-import type { GeneratedQuestion } from "./types";
+import type { FactCandidate, GeneratedQuestion } from "./types";
 
 // ─── Source-hint quality blocklist ─────────────────────────────────────────
 // Patterns that signal the model wasn't grounded in a single citeable source.
@@ -82,13 +82,84 @@ const ANSWER_IN_QUESTION_STOPWORDS = new Set([
 ]);
 
 function looksLikeAnswerInQuestion(question: string, answer: string): boolean {
-  const normalize = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-  const q = normalize(question);
-  const a = normalize(answer);
+  const q = normalizeText(question);
+  const a = normalizeText(answer);
   if (a.length < 3) return false;
   if (ANSWER_IN_QUESTION_STOPWORDS.has(a)) return false;
   return q.includes(a);
+}
+
+function normalizeText(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function distinctNormalizedValues(values: string[]): string[] {
+  return values
+    .map((value) => normalizeText(value))
+    .filter((value) => value.length > 0);
+}
+
+function hasDuplicateOptions(correctAnswer: string, aliases: string[], distractors: string[]): boolean {
+  const correctForms = new Set(distinctNormalizedValues([correctAnswer, ...aliases]));
+  const distractorForms = distinctNormalizedValues(distractors);
+  const allForms = distinctNormalizedValues([correctAnswer, ...distractors]);
+
+  if (new Set(allForms).size !== allForms.length) return true;
+  return distractorForms.some((d) =>
+    [...correctForms].some((c) => d === c || (c.length >= 3 && d.includes(c)))
+  );
+}
+
+function looksLikeAnyAnswerInQuestion(question: string, answers: string[]): boolean {
+  return answers.some((answer) => looksLikeAnswerInQuestion(question, answer));
+}
+
+function hasEmptyOption(values: string[]): boolean {
+  return values.some((value) => value.trim().length === 0);
+}
+
+function looksLikeYesNoQuestion(question: string, answer: string): boolean {
+  const q = normalizeText(question);
+  const a = normalizeText(answer);
+  if (a !== "yes" && a !== "no" && a !== "true" && a !== "false") return false;
+  return /^(is|are|was|were|do|does|did|can|could|should|would|will|has|have|had)\b/.test(q);
+}
+
+const ANSWER_GROUNDING_STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "that", "this", "into", "onto",
+  "a", "an", "of", "in", "on", "to", "by", "as", "at", "or",
+]);
+
+function answerTerms(answer: string): string[] {
+  return normalizeText(answer)
+    .split(" ")
+    .filter((token) => token.length >= 3 && !ANSWER_GROUNDING_STOPWORDS.has(token));
+}
+
+function appearsGrounded(answer: string, context: string): boolean {
+  const normalizedAnswer = normalizeText(answer);
+  const compactAnswer = normalizedAnswer.replace(/\s+/g, "");
+  const compactContext = context.replace(/\s+/g, "");
+  if (compactAnswer.length >= 2 && compactContext.includes(compactAnswer)) return true;
+  if (normalizedAnswer.length < 3) return false;
+  if (context.includes(normalizedAnswer)) return true;
+
+  const terms = answerTerms(answer);
+  if (terms.length === 0) return false;
+  return terms.every((term) => context.includes(term));
+}
+
+function looksGroundedInFact(q: GeneratedQuestion, fact: FactCandidate): boolean {
+  const context = normalizeText(`${fact.claim} ${fact.source}`);
+  return [q.correct_answer, ...q.answer_aliases].some((answer) =>
+    appearsGrounded(answer, context)
+  );
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -106,11 +177,44 @@ export function checkQuestion(q: GeneratedQuestion): {
   ok: boolean;
   reason?: string;
 } {
+  if (q.question.trim().length === 0 || q.correct_answer.trim().length === 0) {
+    return { ok: false, reason: "empty question or answer" };
+  }
+  if (q.source_hint.trim().length === 0) {
+    return { ok: false, reason: "missing source_hint" };
+  }
   if (looksLikeMetaCommentary(q.source_hint)) {
     return { ok: false, reason: `meta-commentary in source_hint: "${q.source_hint.slice(0, 80)}"` };
   }
   if (looksLikeTrickAnswer(q.correct_answer)) {
     return { ok: false, reason: `trick answer: "${q.correct_answer.slice(0, 60)}"` };
+  }
+  if (looksLikeYesNoQuestion(q.question, q.correct_answer)) {
+    return { ok: false, reason: "yes/no question" };
+  }
+  if (looksLikeAnyAnswerInQuestion(q.question, [q.correct_answer, ...q.answer_aliases])) {
+    return {
+      ok: false,
+      reason: `answer "${q.correct_answer.slice(0, 40)}" appears in question text`,
+    };
+  }
+  if (q.per_question_format === "free_text" && q.distractors.length > 0) {
+    return { ok: false, reason: "free-text question has distractors" };
+  }
+  if (q.per_question_format === "multiple_choice" && q.distractors.length !== 3) {
+    return { ok: false, reason: `multiple-choice question has ${q.distractors.length} distractors` };
+  }
+  if (
+    q.per_question_format === "multiple_choice" &&
+    hasEmptyOption([q.correct_answer, ...q.distractors])
+  ) {
+    return { ok: false, reason: "multiple-choice question has an empty option" };
+  }
+  if (
+    q.per_question_format === "multiple_choice" &&
+    hasDuplicateOptions(q.correct_answer, q.answer_aliases, q.distractors)
+  ) {
+    return { ok: false, reason: "duplicate or answer-equivalent multiple-choice option" };
   }
   if (
     q.per_question_format === "multiple_choice" &&
@@ -119,10 +223,17 @@ export function checkQuestion(q: GeneratedQuestion): {
   ) {
     return { ok: false, reason: "length giveaway — correct answer much longer than distractors" };
   }
-  if (looksLikeAnswerInQuestion(q.question, q.correct_answer)) {
+  return { ok: true };
+}
+
+export function checkQuestionAgainstFact(
+  q: GeneratedQuestion,
+  fact: FactCandidate
+): { ok: boolean; reason?: string } {
+  if (!looksGroundedInFact(q, fact)) {
     return {
       ok: false,
-      reason: `answer "${q.correct_answer.slice(0, 40)}" appears in question text`,
+      reason: `answer "${q.correct_answer.slice(0, 40)}" is not grounded in source fact`,
     };
   }
   return { ok: true };
@@ -134,4 +245,5 @@ export {
   looksLikeTrickAnswer,
   looksLikeLengthGiveaway,
   looksLikeAnswerInQuestion,
+  looksGroundedInFact,
 };

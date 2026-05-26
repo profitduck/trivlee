@@ -84,6 +84,8 @@ export async function runPipeline(
   ]);
 
   const { validated, latencyMs: validate_ms } = validateResult;
+  let totalWriteMs = writerOut.meta.latency_ms;
+  let repairWriteMs: number | undefined;
 
   // Build the verified-fact-index set. Only high-confidence verifications
   // survive — anything less is treated as a hallucination risk.
@@ -147,7 +149,49 @@ export async function runPipeline(
   });
 
   // Trim to the requested count (we asked the writer to oversample).
-  const finalSpec = deduped.slice(0, req.count);
+  let finalSpec = deduped.slice(0, req.count);
+
+  // Cheap repair pass: if the speculative writer came up short but validation
+  // found more high-confidence facts, ask Haiku to write only the missing
+  // questions from the unused verified facts. No web search, no Sonnet.
+  let writerWarning = writerOut.knowledge_warning;
+  if (finalSpec.length < req.count) {
+    const usedFactIndices = new Set(finalSpec.map((q) => q.fact_index));
+    const repairFacts = [...verifiedIndices]
+      .filter((i) => !usedFactIndices.has(i))
+      .map((i) => research.facts[i])
+      .filter((f): f is FactCandidate => f != null);
+    const repairCount = Math.min(req.count - finalSpec.length, repairFacts.length);
+
+    if (repairCount > 0) {
+      await onPhase?.("writing");
+      const repairOut = await writeQuestions({
+        ...req,
+        count: repairCount,
+        topic_interpretation: research.topic_interpretation,
+        difficulty_delivered: research.difficulty_delivered,
+        facts: repairFacts,
+        knowledge_warning_so_far: null,
+        oversample: false,
+      });
+      totalWriteMs += repairOut.meta.latency_ms;
+      repairWriteMs = repairOut.meta.latency_ms;
+      writerWarning = combineWarnings(writerWarning, repairOut.knowledge_warning);
+
+      const seenRepairFactIndices = new Set<number>();
+      const seenQuestionKeys = new Set(finalSpec.map(questionKey));
+      const repairSpec = repairOut.questions.filter((q) => {
+        if (q.fact_index < 0 || q.fact_index >= repairFacts.length) return false;
+        if (seenRepairFactIndices.has(q.fact_index)) return false;
+        const key = questionKey(q);
+        if (seenQuestionKeys.has(key)) return false;
+        seenRepairFactIndices.add(q.fact_index);
+        seenQuestionKeys.add(key);
+        return true;
+      });
+      finalSpec = [...finalSpec, ...repairSpec].slice(0, req.count);
+    }
+  }
 
   // Strip fact_index — it's internal to the pipeline, not part of the public type.
   const finalQuestions: GeneratedQuestion[] = finalSpec.map(
@@ -156,7 +200,7 @@ export async function runPipeline(
   );
 
   // Knowledge warning: tell the user if we fell short of the requested count.
-  let knowledge_warning = writerOut.knowledge_warning;
+  let knowledge_warning = writerWarning;
   if (finalQuestions.length < req.count) {
     const note = `Delivered ${finalQuestions.length} of ${req.count} requested — some questions didn't pass fact-checking.`;
     knowledge_warning = knowledge_warning ? `${knowledge_warning} ${note}` : note;
@@ -175,11 +219,31 @@ export async function runPipeline(
       latency_ms,
       research_ms: research.meta.latency_ms,
       validate_ms,
-      write_ms: writerOut.meta.latency_ms,
+      write_ms: totalWriteMs,
+      repair_write_ms: repairWriteMs,
       facts_researched: research.facts.length,
       facts_validated: verifiedIndices.size,
     },
   };
+}
+
+function questionKey(q: GeneratedQuestion): string {
+  return `${q.question}|${q.correct_answer}`
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function combineWarnings(...warnings: (string | null | undefined)[]): string | null {
+  const parts = warnings
+    .flatMap((warning) => warning?.split(/\s+(?=Delivered \d+ of \d+ requested\b)/) ?? [])
+    .map((warning) => warning.trim())
+    .filter((warning) => warning.length > 0);
+  const unique = [...new Set(parts)];
+  return unique.length > 0 ? unique.join(" ") : null;
 }
 
 // Re-export so callers can plug fact arrays into other flows (e.g. tests).

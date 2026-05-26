@@ -1,5 +1,6 @@
 import "server-only";
 import { query } from "@/lib/db";
+import { checkQuestion } from "./filters";
 import type { GeneratedQuestion, PerQuestionFormat } from "./types";
 
 export interface BankDraw {
@@ -25,6 +26,7 @@ export async function drawFromBank(
   userId: string
 ): Promise<BankDraw> {
   if (count <= 0) return { questions: [], bankIds: [] };
+  const candidateLimit = Math.min(50, Math.max(count * 3, count));
 
   const { rows } = await query<{
     id: string;
@@ -64,21 +66,34 @@ export async function drawFromBank(
         )
       ORDER BY quality_score DESC NULLS LAST, times_used DESC, created_at DESC
       LIMIT $4`,
-    [topicNormalized, difficulty, format, count, userId]
+    [topicNormalized, difficulty, format, candidateLimit, userId]
   );
 
-  const questions: GeneratedQuestion[] = rows.map((r) => ({
-    question: r.question_text,
-    correct_answer: r.correct_answer,
-    answer_aliases: r.answer_aliases ?? [],
-    distractors: r.distractors ?? [],
-    source_hint: r.source_hint ?? "",
-    type: (r.type as GeneratedQuestion["type"]) ?? "factual",
-    per_question_format: r.per_question_format as PerQuestionFormat,
-  }));
+  const questions: GeneratedQuestion[] = [];
+  const bankIds: string[] = [];
+  for (const r of rows) {
+    const q: GeneratedQuestion = {
+      question: r.question_text,
+      correct_answer: r.correct_answer,
+      answer_aliases: r.answer_aliases ?? [],
+      distractors: r.distractors ?? [],
+      source_hint: r.source_hint ?? "",
+      type: (r.type as GeneratedQuestion["type"]) ?? "factual",
+      per_question_format: r.per_question_format as PerQuestionFormat,
+    };
+    const check = checkQuestion(q);
+    if (!check.ok) {
+      console.warn(`[question-bank] skipping ${r.id}: ${check.reason}`);
+      continue;
+    }
+    questions.push(q);
+    bankIds.push(r.id);
+    if (questions.length >= count) break;
+  }
+
   return {
     questions,
-    bankIds: rows.map((r) => r.id),
+    bankIds,
   };
 }
 
