@@ -110,11 +110,19 @@ export async function submitAnswer(
     if (!msg.includes("attempts_challenge_id_question_id_user_id_key")) throw err;
   }
 
-  // Check completion. A match auto-finalizes only when:
-  //   (a) it has a player cap AND every participant has answered all questions, OR
-  //   (b) the host closes it manually (handled elsewhere).
-  // Otherwise the host has to close it explicitly.
-  const { rows: progress } = await query<{ my_count: string; total_unfinished: string }>(
+  // Check completion. A match auto-finalizes ONLY when:
+  //   (a) the match has a player cap,
+  //   (b) the cap is filled (participants_count === max_players), AND
+  //   (c) every participant has answered all questions.
+  // Otherwise: the host has to close it manually, or auto_close_at deadline
+  // closes it. This prevents premature close when fewer joined than the cap
+  // (e.g. cap=10 but only 2 joined and finished — match stays open in case
+  // more players want to join).
+  const { rows: progress } = await query<{
+    my_count: string;
+    total_unfinished: string;
+    participant_count: string;
+  }>(
     `SELECT
        (SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = $1 AND a.user_id = $2) AS my_count,
        (
@@ -122,18 +130,21 @@ export async function submitAnswer(
          FROM challenge_participants cp
          WHERE cp.challenge_id = $1
            AND (SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = $1 AND a.user_id = cp.user_id) < $3
-       ) AS total_unfinished`,
+       ) AS total_unfinished,
+       (SELECT COUNT(*) FROM challenge_participants cp WHERE cp.challenge_id = $1) AS participant_count`,
     [challengeId, user.id, q.num_questions]
   );
   const myCount = Number(progress[0].my_count);
   const totalUnfinished = Number(progress[0].total_unfinished);
+  const participantCount = Number(progress[0].participant_count);
   const myDone = myCount >= q.num_questions;
 
-  // Auto-finalize only when capped AND everyone is done.
+  // Auto-finalize only when the cap is fully filled AND everyone is done.
   if (
     myDone &&
     totalUnfinished === 0 &&
-    q.max_players !== null
+    q.max_players !== null &&
+    participantCount >= q.max_players
   ) {
     await query(
       `UPDATE challenges
