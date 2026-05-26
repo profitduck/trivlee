@@ -1,4 +1,5 @@
 import "server-only";
+import { generateFastQuestions } from "./fast-generator";
 import { researchFacts } from "./researcher";
 import { validateFacts } from "./validator";
 import { writeQuestions, type SpeculativeQuestion } from "./writer";
@@ -81,6 +82,10 @@ export async function runPipeline(
   onPhase?: PhaseHook
 ): Promise<GenerationResponse> {
   const overallStart = performance.now();
+  if (process.env.AI_PIPELINE_MODE !== "verified") {
+    await onPhase?.("writing");
+    return generateFastQuestions(req);
+  }
   return withTimeout(runPipelineInner(req, onPhase, overallStart), PIPELINE_TIMEOUT_MS, overallStart);
 }
 
