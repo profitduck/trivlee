@@ -2,19 +2,8 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, PIPELINE_MODEL, parseStrictJson } from "./client";
 import { VALIDATOR_SYSTEM_PROMPT } from "./prompts";
-import { WEB_SEARCH_ALLOWED_DOMAINS } from "./web-search-config";
+import { validatorSearchTool } from "./web-search-config";
 import type { FactCandidate, ValidatedFact } from "./types";
-
-// The validator gets a bigger search budget than the researcher per-call
-// because it's doing one batch pass over many facts. Spread across N facts
-// it's still ~0.3 searches/fact on average — Sonnet decides which ones
-// warrant the look-up based on confidence.
-const VALIDATOR_WEB_SEARCH_TOOL = {
-  type: "web_search_20260209" as const,
-  name: "web_search" as const,
-  allowed_domains: WEB_SEARCH_ALLOWED_DOMAINS,
-  max_uses: 8,
-};
 
 interface ValidatorOutput {
   validations: { claim: string; verified: boolean; confidence: string; notes: string }[];
@@ -26,12 +15,14 @@ interface ValidatorOutput {
  * Callers filter to {verified=true, confidence='high'} before passing to the writer.
  *
  * Cost note: one batched call instead of N parallel calls keeps cost predictable
- * and avoids contention on the web-search rate limit. The model is told to spend
- * its 8 searches on the highest-uncertainty claims.
+ * and avoids contention on the web-search rate limit. Search budget is
+ * difficulty-aware (5 for D1-7, 8 for D8-10) since niche/obscure facts need
+ * more lookups while common-topic claims often need none.
  */
 export async function validateFacts(
   topic: string,
-  facts: FactCandidate[]
+  facts: FactCandidate[],
+  difficulty: number
 ): Promise<{ validated: ValidatedFact[]; latencyMs: number }> {
   if (facts.length === 0) {
     return { validated: [], latencyMs: 0 };
@@ -53,7 +44,7 @@ export async function validateFacts(
           cache_control: { type: "ephemeral" },
         },
       ],
-      tools: [VALIDATOR_WEB_SEARCH_TOOL],
+      tools: [validatorSearchTool(difficulty)],
       messages: [{ role: "user", content: userPayload }],
     });
   } catch (err) {

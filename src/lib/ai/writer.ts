@@ -1,6 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient, PIPELINE_MODEL, parseStrictJson } from "./client";
+import { getAnthropicClient, parseStrictJson } from "./client";
 import { WRITER_SYSTEM_PROMPT } from "./prompts";
 import { checkQuestion } from "./filters";
 import type {
@@ -10,6 +10,13 @@ import type {
   QuestionType,
   ValidatedFact,
 } from "./types";
+
+// Writer runs on Haiku 4.5. By the time facts reach this stage they're
+// pre-validated, so the writer doesn't need world knowledge — it only needs
+// to shape verified material into well-formed questions. Haiku is 3x cheaper
+// than Sonnet and faster; quality is on par for this kind of structured
+// transformation task.
+const WRITER_MODEL = "claude-haiku-4-5";
 
 interface WriterInput extends GenerationRequest {
   topic_interpretation: string;
@@ -57,7 +64,7 @@ export async function writeQuestions(input: WriterInput): Promise<WriterOutput> 
   let response: Anthropic.Message;
   try {
     response = await client.messages.create({
-      model: PIPELINE_MODEL,
+      model: WRITER_MODEL,
       max_tokens: 10000,
       system: [
         {
@@ -136,7 +143,7 @@ function normalizeWriter(
     difficulty_delivered,
     knowledge_warning: writerWarning,
     questions,
-    meta: { model: PIPELINE_MODEL, latency_ms },
+    meta: { model: WRITER_MODEL, latency_ms },
   };
 }
 

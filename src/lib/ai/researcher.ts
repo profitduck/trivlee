@@ -2,7 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, PIPELINE_MODEL, parseStrictJson } from "./client";
 import { RESEARCHER_SYSTEM_PROMPT } from "./prompts";
-import { GENERATOR_WEB_SEARCH_TOOL } from "./web-search-config";
+import { researcherSearchTool } from "./web-search-config";
 import type {
   FactCandidate,
   GenerationRequest,
@@ -49,7 +49,7 @@ export async function researchFacts(
           cache_control: { type: "ephemeral" },
         },
       ],
-      tools: [GENERATOR_WEB_SEARCH_TOOL],
+      tools: [researcherSearchTool(req.difficulty)],
       messages: [{ role: "user", content: userPayload }],
     });
   } catch (err) {

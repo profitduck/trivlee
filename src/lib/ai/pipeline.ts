@@ -55,10 +55,14 @@ export async function runPipeline(
   }
 
   // ─── Stage 2: validate ───────────────────────────────────────────────────
+  // Pass research.difficulty_delivered (may be capped from req.difficulty) so
+  // the validator's web search budget matches the actual difficulty of the
+  // facts in hand, not the originally requested difficulty.
   await onPhase?.("validating");
   const { validated, latencyMs: validate_ms } = await validateFacts(
     req.topic,
-    research.facts
+    research.facts,
+    research.difficulty_delivered
   );
 
   // Keep only high-confidence verified facts. Anything else is a hallucination
