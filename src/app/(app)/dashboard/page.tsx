@@ -1,11 +1,16 @@
 import Link from "next/link";
-import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight } from "lucide-react";
+import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { getPendingInvites, sweepAutoCloseForUser, type PendingInvite } from "@/lib/matches";
+import {
+  failStuckGenerationsForUser,
+  getPendingInvites,
+  sweepAutoCloseForUser,
+  type PendingInvite,
+} from "@/lib/matches";
 
 interface ChallengeRow {
   id: string;
@@ -19,6 +24,8 @@ interface ChallengeRow {
   participant_count: number;
   max_players: number | null;
   challenger_username: string | null;
+  /** Non-null while generation is in flight; "failed:..." after the stuck-sweep flips it. */
+  generation_phase: string | null;
 }
 
 async function getMyChallenges(userId: string): Promise<ChallengeRow[]> {
@@ -26,7 +33,7 @@ async function getMyChallenges(userId: string): Promise<ChallengeRow[]> {
     `SELECT
        c.id, c.topic, c.difficulty_requested, c.num_questions,
        c.mode::text AS mode, c.status::text AS status, c.created_at,
-       c.max_players,
+       c.max_players, c.generation_phase,
        cp_me.is_challenger,
        (SELECT COUNT(*) FROM challenge_participants cp2 WHERE cp2.challenge_id = c.id) AS participant_count,
        ch.username AS challenger_username
@@ -42,15 +49,30 @@ async function getMyChallenges(userId: string): Promise<ChallengeRow[]> {
 
 export default async function DashboardPage() {
   const user = await requireUser();
-  await sweepAutoCloseForUser(user.id);
+  // Two passive sweeps before fetching the list:
+  //   1. Fail any matches stuck in generation > 5 min (Railway-restart casualties)
+  //   2. Close any matches past their auto_close_at deadline
+  // Both are debounced per-user; no-op when called frequently.
+  await Promise.all([
+    failStuckGenerationsForUser(user.id),
+    sweepAutoCloseForUser(user.id),
+  ]);
   const [challenges, pendingInvites] = await Promise.all([
     getMyChallenges(user.id),
     getPendingInvites(user.id),
   ]);
 
-  const pending = challenges.filter((c) => c.status === "pending");
-  const inProgress = challenges.filter((c) => c.status === "in_progress");
-  const completed = challenges.filter((c) => c.status === "completed");
+  // Stuck/failed matches are status='cancelled' AND generation_phase starts with
+  // 'failed:'. Surface them in their own section so they don't clutter the main
+  // matches list and the user knows action is needed.
+  const failedGen = challenges.filter(
+    (c) => c.generation_phase !== null && c.generation_phase.startsWith("failed:")
+  );
+  const failedGenIds = new Set(failedGen.map((c) => c.id));
+  const activeChallenges = challenges.filter((c) => !failedGenIds.has(c.id));
+  const pending = activeChallenges.filter((c) => c.status === "pending");
+  const inProgress = activeChallenges.filter((c) => c.status === "in_progress");
+  const completed = activeChallenges.filter((c) => c.status === "completed");
 
   return (
     <div className="space-y-10">
@@ -92,6 +114,24 @@ export default async function DashboardPage() {
         />
       </section>
 
+      {failedGen.length > 0 && (
+        <section>
+          <h2 className="font-display text-2xl font-bold mb-4 flex items-center gap-2">
+            <AlertTriangle className="size-5 text-destructive" />
+            Failed generations
+            <Badge variant="destructive">{failedGen.length}</Badge>
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            These matches couldn&rsquo;t finish generating. Click one to retry or delete it.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {failedGen.map((c) => (
+              <FailedChallengeCard key={c.id} c={c} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {pendingInvites.length > 0 && (
         <section>
           <h2 className="font-display text-2xl font-bold mb-4 flex items-center gap-2">
@@ -109,7 +149,7 @@ export default async function DashboardPage() {
 
       <section>
         <h2 className="font-display text-2xl font-bold mb-4">Your matches</h2>
-        {challenges.length === 0 ? (
+        {activeChallenges.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="p-10 text-center">
               <p className="text-muted-foreground mb-4">
@@ -122,7 +162,7 @@ export default async function DashboardPage() {
           </Card>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {challenges.map((c) => (
+            {activeChallenges.map((c) => (
               <ChallengeCard key={c.id} c={c} />
             ))}
           </div>
@@ -203,6 +243,32 @@ function ChallengeCard({ c }: { c: ChallengeRow }) {
               {sizeLabel}
             </span>
             {roleLabel && <span>· {roleLabel}</span>}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    </Link>
+  );
+}
+
+/**
+ * Special render for matches whose generation failed. Visually distinct
+ * (destructive border + tint) so the user immediately sees these need action.
+ * Click navigates to the detail page where they can retry or delete.
+ */
+function FailedChallengeCard({ c }: { c: ChallengeRow }) {
+  return (
+    <Link href={`/challenges/${c.id}`} className="block">
+      <Card className="border-destructive/40 bg-destructive/5 transition hover:shadow-md hover:border-destructive/70 h-full">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base font-display">{c.topic}</CardTitle>
+            <span className="text-xs uppercase tracking-wider px-2 py-0.5 rounded-full bg-destructive/15 text-destructive font-semibold inline-flex items-center gap-1">
+              <AlertTriangle className="size-3" /> Failed
+            </span>
+          </div>
+          <CardDescription className="flex items-center gap-3 flex-wrap">
+            <span>{c.num_questions} questions · D{c.difficulty_requested}</span>
+            <span className="text-destructive/80">Generation didn&rsquo;t finish</span>
           </CardDescription>
         </CardHeader>
       </Card>

@@ -19,6 +19,54 @@ export interface Participant {
 const SWEEP_DEBOUNCE_MS = 60_000;
 const lastSweepAt = new Map<string, number>();
 
+// Stuck-generation sweep: matches whose `after()` background worker died
+// (Railway process restart, crashed thread) leave generation_phase set with
+// no one to clear it. This sweep marks them failed so the dashboard can
+// surface them and the user can retry or delete.
+//
+// Threshold matches the polling-endpoint detector (5 minutes). Per-user
+// debounced like the auto-close sweep.
+const STUCK_PHASE_THRESHOLD = "5 minutes";
+const lastStuckSweepAt = new Map<string, number>();
+
+const STUCK_ERROR_MSG =
+  "Generation timed out. The server may have restarted mid-job — please try again.";
+
+/**
+ * Mark any of this user's matches whose generation_phase has been stale for
+ * >5 minutes as failed. Sets status='cancelled' (so they drop out of the
+ * "pending" stat and list) while keeping the generation_phase as 'failed:...'
+ * so the match detail page can render the right card.
+ *
+ * Returns the number of matches flipped to failed.
+ */
+export async function failStuckGenerationsForUser(userId: string): Promise<number> {
+  const now = Date.now();
+  const last = lastStuckSweepAt.get(userId);
+  if (last !== undefined && now - last < SWEEP_DEBOUNCE_MS) return 0;
+  lastStuckSweepAt.set(userId, now);
+
+  const { rows } = await query<{ id: string }>(
+    `UPDATE challenges
+        SET generation_phase = $2,
+            generation_phase_at = now(),
+            status = 'cancelled',
+            knowledge_warning = COALESCE(knowledge_warning, $3)
+      WHERE challenger_id = $1
+        AND generation_phase IS NOT NULL
+        AND generation_phase NOT LIKE 'failed:%'
+        AND generation_phase_at < now() - interval '${STUCK_PHASE_THRESHOLD}'
+      RETURNING id`,
+    [userId, `failed:${STUCK_ERROR_MSG}`, STUCK_ERROR_MSG]
+  );
+  if (rows.length > 0) {
+    console.warn(
+      `[matches] failed ${rows.length} stuck generation(s) for user ${userId}: ${rows.map((r) => r.id).join(", ")}`
+    );
+  }
+  return rows.length;
+}
+
 /**
  * Sweep all open matches the user participates in for past auto_close_at
  * deadlines. Runs on dashboard load so abandoned matches close without needing
