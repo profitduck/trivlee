@@ -39,7 +39,13 @@ interface LifetimeStats {
 
 /**
  * Compute the user's lifetime stats and their global rank in a single query.
- * Rank is calculated from total_points and uses RANK() so ties share a rank.
+ *
+ * `wins` counts matches where this user had the top total_score AND there was
+ * at least one other participant (single-player matches don't count). The
+ * match_max CTE materializes per-match aggregates so we can join against it
+ * without nested subqueries that explode when a user has multiple wins.
+ *
+ * Rank uses RANK() so ties share a rank.
  */
 async function getLifetimeStats(userId: string): Promise<LifetimeStats> {
   const { rows } = await query<{
@@ -50,25 +56,28 @@ async function getLifetimeStats(userId: string): Promise<LifetimeStats> {
     wins: string;
     global_rank: string | null;
   }>(
-    `WITH per_user AS (
+    `WITH match_max AS (
+       SELECT challenge_id,
+              MAX(total_score) AS max_score,
+              COUNT(*)         AS player_count
+         FROM results
+        GROUP BY challenge_id
+     ),
+     per_user AS (
        SELECT
          u.id,
          COALESCE(SUM(r.total_score), 0)::numeric AS pts,
-         COUNT(r.challenge_id)::int AS matches_played,
-         COALESCE(SUM(r.correct_count), 0)::int AS correct,
+         COUNT(r.challenge_id)::int               AS matches_played,
+         COALESCE(SUM(r.correct_count), 0)::int   AS correct,
          (SELECT COUNT(*) FROM attempts a
             WHERE a.user_id = u.id AND a.user_answer IS NOT NULL) AS answered,
-         (
-           SELECT COUNT(*) FROM results r2
-             JOIN results other ON other.challenge_id = r2.challenge_id
-            WHERE r2.user_id = u.id
-              AND other.total_score >= r2.total_score
-              AND (SELECT COUNT(*) FROM results r3 WHERE r3.challenge_id = r2.challenge_id) > 1
-              AND r2.total_score = (SELECT MAX(total_score) FROM results r4 WHERE r4.challenge_id = r2.challenge_id)
-            GROUP BY r2.challenge_id
-         ) AS wins_count
+         COALESCE(SUM(
+           CASE WHEN mm.max_score = r.total_score AND mm.player_count > 1
+                THEN 1 ELSE 0 END
+         ), 0)::int AS wins
        FROM users u
-       LEFT JOIN results r ON r.user_id = u.id
+       LEFT JOIN results r    ON r.user_id = u.id
+       LEFT JOIN match_max mm ON mm.challenge_id = r.challenge_id
        GROUP BY u.id
      ),
      ranks AS (
@@ -77,18 +86,12 @@ async function getLifetimeStats(userId: string): Promise<LifetimeStats> {
         WHERE matches_played > 0
      )
      SELECT
-       pu.pts        AS total_points,
-       pu.correct    AS correct,
-       pu.answered   AS answered,
+       pu.pts            AS total_points,
+       pu.correct        AS correct,
+       pu.answered       AS answered,
        pu.matches_played,
-       (SELECT COUNT(*)
-          FROM results r2
-          JOIN results other ON other.challenge_id = r2.challenge_id
-         WHERE r2.user_id = pu.id
-           AND r2.total_score = (SELECT MAX(total_score) FROM results r4 WHERE r4.challenge_id = r2.challenge_id)
-           AND (SELECT COUNT(*) FROM results r3 WHERE r3.challenge_id = r2.challenge_id) > 1
-        )::int AS wins,
-       r.rnk::int AS global_rank
+       pu.wins,
+       r.rnk::int        AS global_rank
      FROM per_user pu
      LEFT JOIN ranks r ON r.id = pu.id
      WHERE pu.id = $1`,
