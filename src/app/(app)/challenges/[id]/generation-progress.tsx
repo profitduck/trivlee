@@ -287,7 +287,7 @@ function FailedCard({ challengeId, error }: { challengeId: string; error: string
         </div>
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="default">
-            <Link href="/challenges/new">Try again</Link>
+            <Link href={`/challenges/new?retry=${challengeId}`}>Try again with same settings</Link>
           </Button>
           <DeleteMatchButton challengeId={challengeId} variant="outline" />
         </div>

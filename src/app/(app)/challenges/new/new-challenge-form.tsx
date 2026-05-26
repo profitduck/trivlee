@@ -52,21 +52,41 @@ function formatHours(h: number): string {
   return `${h}h`;
 }
 
-export function NewChallengeForm() {
+/**
+ * Optional pre-filled values when retrying a failed match. The new-challenge
+ * page reads the retry query param, fetches the failed challenge's settings,
+ * and passes them here so the user doesn't have to re-enter anything.
+ */
+export interface RetryDefaults {
+  topic?: string;
+  difficulty?: number;
+  numQuestions?: number;
+  format?: ChallengeFormat;
+  timerMode?: TimerMode;
+  perQuestionDuration?: number;
+  totalDuration?: number;
+  sizeMode?: SizeMode;
+  playerCap?: number;
+  autoCloseHours?: number | null;
+}
+
+export function NewChallengeForm({ defaults }: { defaults?: RetryDefaults } = {}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const [topic, setTopic] = useState("");
-  const [difficulty, setDifficulty] = useState(5);
-  const [numQuestions, setNumQuestions] = useState(10);
-  const [format, setFormat] = useState<ChallengeFormat>("multiple_choice");
-  const [timerMode, setTimerMode] = useState<TimerMode>("off");
-  const [perQuestionDuration, setPerQuestionDuration] = useState<number>(20);
-  const [totalDuration, setTotalDuration] = useState<number>(120);
+  const [topic, setTopic] = useState(defaults?.topic ?? "");
+  const [difficulty, setDifficulty] = useState(defaults?.difficulty ?? 5);
+  const [numQuestions, setNumQuestions] = useState(defaults?.numQuestions ?? 10);
+  const [format, setFormat] = useState<ChallengeFormat>(defaults?.format ?? "multiple_choice");
+  const [timerMode, setTimerMode] = useState<TimerMode>(defaults?.timerMode ?? "off");
+  const [perQuestionDuration, setPerQuestionDuration] = useState<number>(defaults?.perQuestionDuration ?? 20);
+  const [totalDuration, setTotalDuration] = useState<number>(defaults?.totalDuration ?? 120);
 
-  const [sizeMode, setSizeMode] = useState<SizeMode>("open");
-  const [playerCap, setPlayerCap] = useState<number>(5);
-  const [autoCloseHours, setAutoCloseHours] = useState<number | null>(24);
+  const [sizeMode, setSizeMode] = useState<SizeMode>(defaults?.sizeMode ?? "open");
+  const [playerCap, setPlayerCap] = useState<number>(defaults?.playerCap ?? 5);
+  const [autoCloseHours, setAutoCloseHours] = useState<number | null>(
+    defaults?.autoCloseHours !== undefined ? defaults.autoCloseHours : 24
+  );
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
