@@ -26,6 +26,7 @@ import {
 } from "@/lib/matches";
 import { closeMatchAction } from "./actions";
 import { CopyInviteLink } from "./copy-invite-link";
+import { GenerationProgress } from "./generation-progress";
 
 interface ChallengeDetail {
   id: string;
@@ -45,6 +46,7 @@ interface ChallengeDetail {
   max_players: number | null;
   auto_close_at: string | null;
   closed_at: string | null;
+  generation_phase: string | null;
 }
 
 async function getChallenge(id: string): Promise<ChallengeDetail | null> {
@@ -55,7 +57,8 @@ async function getChallenge(id: string): Promise<ChallengeDetail | null> {
        c.num_questions, c.format::text AS format, c.mode::text AS mode,
        c.time_per_question_s, c.total_time_s,
        c.status::text AS status, c.invite_token,
-       c.max_players, c.auto_close_at, c.closed_at
+       c.max_players, c.auto_close_at, c.closed_at,
+       c.generation_phase
      FROM challenges c
      WHERE c.id = $1`,
     [id]
@@ -84,6 +87,21 @@ export default async function ChallengePage({
       redirect(`/join/${c.invite_token}`);
     }
     notFound();
+  }
+
+  // Generation in flight — show the real-time progress card and let it poll.
+  // Only the challenger sees this; joiners can't land here while a match is
+  // generating because the invite path doesn't surface incomplete matches.
+  if (c.generation_phase !== null && c.challenger_id === user.id) {
+    return (
+      <div className="max-w-2xl mx-auto space-y-6">
+        <GenerationProgress
+          challengeId={c.id}
+          topic={c.topic}
+          numQuestions={c.num_questions}
+        />
+      </div>
+    );
   }
 
   if (c.status === "completed") {

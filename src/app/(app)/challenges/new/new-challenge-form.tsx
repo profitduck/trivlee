@@ -1,16 +1,12 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
   Loader2,
   Sparkles,
   AlertTriangle,
   Users,
   Hourglass,
-  Check,
-  PencilLine,
-  ShieldCheck,
-  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -94,9 +90,10 @@ export function NewChallengeForm() {
     });
   };
 
-  if (pending) {
-    return <GeneratingCard topic={topic} numQuestions={numQuestions} />;
-  }
+  // No in-form progress card: the server action returns/redirects fast (it
+  // detaches the heavy AI work via `after()`), so the user lands on the match
+  // detail page where the real-time progress UI takes over. The submit button
+  // shows a brief spinner during the synchronous handoff.
 
   return (
     <form onSubmit={onSubmit} className="space-y-6">
@@ -318,154 +315,6 @@ export function NewChallengeForm() {
         </Button>
       </div>
     </form>
-  );
-}
-
-// Phase timings (ms) based on observed production latency:
-//   Sonnet generation: ~20-25s
-//   Haiku verification (parallel): ~2-3s
-//   DB insert + redirect: ~0.5-1s
-// The bar is an estimate — if the action returns early, we redirect; if it
-// runs over, the bar holds at 99% until done. Not perfect, but better than a
-// motionless spinner.
-const PHASE_DURATIONS = {
-  drafting: 22000,
-  verifying: 3000,
-  saving: 1500,
-} as const;
-
-function GeneratingCard({
-  topic,
-  numQuestions,
-}: {
-  topic: string;
-  numQuestions: number;
-}) {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const start = Date.now();
-    const tick = setInterval(() => {
-      setElapsed(Date.now() - start);
-    }, 100);
-    return () => clearInterval(tick);
-  }, []);
-
-  // Phase boundaries
-  const draftingEnd = PHASE_DURATIONS.drafting;
-  const verifyingEnd = draftingEnd + PHASE_DURATIONS.verifying;
-
-  let phase: "drafting" | "verifying" | "saving";
-  if (elapsed < draftingEnd) phase = "drafting";
-  else if (elapsed < verifyingEnd) phase = "verifying";
-  else phase = "saving";
-
-  // Map elapsed → 0-99% with phase weighting (drafting 0-82, verify 82-95, save 95-99)
-  let pct: number;
-  if (elapsed < draftingEnd) {
-    pct = (elapsed / draftingEnd) * 82;
-  } else if (elapsed < verifyingEnd) {
-    pct = 82 + ((elapsed - draftingEnd) / PHASE_DURATIONS.verifying) * 13;
-  } else {
-    pct = Math.min(99, 95 + ((elapsed - verifyingEnd) / 4000) * 4);
-  }
-
-  const cleanTopic = topic.trim() || "your topic";
-
-  return (
-    <Card className="border-2">
-      <CardContent className="p-8 sm:p-10 text-center space-y-6">
-        <div className="size-16 mx-auto rounded-2xl bg-primary/10 grid place-items-center">
-          <Sparkles className="size-8 text-primary" />
-        </div>
-
-        <div className="space-y-1">
-          <h3 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tighter">
-            Creating your match…
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {phase === "drafting" &&
-              `Drafting ${numQuestions} questions on "${cleanTopic}"`}
-            {phase === "verifying" &&
-              "Fact-checking each question with our second model"}
-            {phase === "saving" &&
-              "Almost there — saving the match"}
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary transition-[width] duration-200 ease-out"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground tabular-nums">
-            {Math.floor(pct)}%
-          </p>
-        </div>
-
-        <div className="grid gap-2 text-sm text-left max-w-xs mx-auto">
-          <PhaseRow
-            done={pct >= 82}
-            active={phase === "drafting"}
-            icon={<PencilLine className="size-4" />}
-            label="Draft questions"
-          />
-          <PhaseRow
-            done={pct >= 95}
-            active={phase === "verifying"}
-            icon={<ShieldCheck className="size-4" />}
-            label="Fact-check"
-          />
-          <PhaseRow
-            done={pct >= 99}
-            active={phase === "saving"}
-            icon={<Database className="size-4" />}
-            label="Save match"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PhaseRow({
-  done,
-  active,
-  icon,
-  label,
-}: {
-  done: boolean;
-  active: boolean;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors",
-        done && "text-foreground",
-        !done && active && "bg-primary/5 text-foreground",
-        !done && !active && "text-muted-foreground"
-      )}
-    >
-      <span
-        className={cn(
-          "size-6 rounded-md grid place-items-center shrink-0",
-          done ? "bg-chart-5/20 text-chart-5" : active ? "bg-primary/15 text-primary" : "bg-muted"
-        )}
-      >
-        {done ? (
-          <Check className="size-3.5" />
-        ) : active ? (
-          <Loader2 className="size-3.5 animate-spin" />
-        ) : (
-          icon
-        )}
-      </span>
-      <span className="font-medium">{label}</span>
-    </div>
   );
 }
 
