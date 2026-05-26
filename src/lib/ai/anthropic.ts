@@ -176,6 +176,21 @@ const SOURCE_HINT_BLOCKLIST = [
   /\bi'm not\b/i,
   /verified question/i,
   /this is verified/i,
+  // Editorial "notes" — model adding caveats or cross-references means it
+  // wasn't grounded in a single canonical source.
+  /\bnote:/i,
+  /\bnote that\b/i,
+  // Multi-source citations (slash between two source descriptions) almost
+  // always mean the model is conflating distinct episodes/properties into
+  // one question.
+  /\s\/\s.*(season|episode|chapter|page|year)/i,
+  // Vague aggregations — when the model says it's pulling from "related
+  // episodes" or "various" / "multiple", it isn't grounded in one fact.
+  /\band related (episodes|chapters|sources|moments|scenes)\b/i,
+  /\bvarious episodes\b/i,
+  /\bmultiple episodes\b/i,
+  /\bthroughout (the )?series\b/i,
+  /\bacross the series\b/i,
 ];
 
 function looksLikeMetaCommentary(hint: string): boolean {
