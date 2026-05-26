@@ -42,7 +42,7 @@ export default async function SignInPage({
             <Swords className="size-5" />
           </div>
           <span className="font-display text-xl font-bold tracking-tight">
-            Trivia Duel
+            Trivlee
           </span>
         </Link>
 

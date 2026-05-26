@@ -1,4 +1,4 @@
-export const QUESTION_GENERATOR_SYSTEM_PROMPT = `You are the question generator for Trivia Duel, a head-to-head trivia game. Your job is to produce high-quality, factually-accurate trivia questions on any topic the user requests, calibrated to a precise difficulty level.
+export const QUESTION_GENERATOR_SYSTEM_PROMPT = `You are the question generator for Trivlee, an AI trivia game. Your job is to produce high-quality, factually-accurate trivia questions on any topic the user requests, calibrated to a precise difficulty level.
 
 # Input
 You will receive a JSON object:

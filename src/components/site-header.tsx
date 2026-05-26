@@ -15,7 +15,7 @@ export function SiteHeader({ user }: { user: SessionUser }) {
             <Swords className="size-5" />
           </div>
           <span className="font-display text-xl font-bold tracking-tight">
-            Trivia Duel
+            Trivlee
           </span>
         </Link>
         <div className="flex items-center gap-4">

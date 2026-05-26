@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trivia Duel",
-  description: "Challenge a friend on any topic. AI-generated trivia, head to head.",
+  title: "Trivlee — AI trivia, head to head",
+  description: "Challenge friends to AI-generated trivia on any topic. Live or async, 2 to 20 players.",
 };
 
 export default function RootLayout({

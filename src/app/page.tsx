@@ -13,7 +13,7 @@ export default function Home() {
               <Swords className="size-5" />
             </div>
             <span className="font-display text-xl font-bold tracking-tight">
-              Trivia Duel
+              Trivlee
             </span>
           </div>
           <nav className="flex items-center gap-2">
@@ -72,7 +72,7 @@ export default function Home() {
         </section>
 
         <footer className="mt-32 border-t pt-8 text-sm text-muted-foreground">
-          <p>&copy; {new Date().getFullYear()} Trivia Duel. Built for fun.</p>
+          <p>&copy; {new Date().getFullYear()} Trivlee. Built for fun.</p>
         </footer>
       </div>
     </main>
