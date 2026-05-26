@@ -29,6 +29,7 @@ export async function generateQuestions(
   try {
     return await anthropicGenerate(req);
   } catch (err) {
+    console.error("[generator] anthropicGenerate threw:", err);
     throw new AIGenerationError(
       "The AI couldn't be reached. Please try again in a moment.",
       err

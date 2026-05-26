@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 export function CopyInviteLink({ token }: { token: string }) {
   const [copied, setCopied] = useState(false);
-  const url = typeof window !== "undefined"
-    ? `${window.location.origin}/join/${token}`
-    : `/join/${token}`;
+  // Defer window-dependent URL to after hydration to avoid SSR mismatch.
+  // SSR renders the relative path; client upgrades to the absolute URL.
+  const [url, setUrl] = useState<string>(`/join/${token}`);
+  useEffect(() => {
+    setUrl(`${window.location.origin}/join/${token}`);
+  }, [token]);
 
   async function copy() {
     try {

@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { QUESTION_GENERATOR_SYSTEM_PROMPT } from "./prompts";
+import { GENERATOR_WEB_SEARCH_TOOL } from "./web-search-config";
 import type {
   GeneratedQuestion,
   GenerationRequest,
@@ -10,7 +11,7 @@ import type {
 } from "./types";
 
 const MODEL = "claude-sonnet-4-6";
-const MAX_TOKENS = 8000;
+const MAX_TOKENS = 12000;
 
 const globalForAnthropic = globalThis as unknown as { __anthropic?: Anthropic };
 
@@ -52,6 +53,7 @@ export async function anthropicGenerate(
           cache_control: { type: "ephemeral" },
         },
       ],
+      tools: [GENERATOR_WEB_SEARCH_TOOL],
       messages: [{ role: "user", content: userPayload }],
     });
   } catch (err) {
@@ -61,9 +63,12 @@ export async function anthropicGenerate(
     throw err;
   }
 
-  const textBlock = response.content.find(
+  // Use the LAST text block — web_search results in interleaved tool_use,
+  // tool_result, and intermediate text. The final JSON is the last text emit.
+  const textBlocks = response.content.filter(
     (b): b is Anthropic.TextBlock => b.type === "text"
   );
+  const textBlock = textBlocks[textBlocks.length - 1];
   if (!textBlock) {
     throw new Error("Anthropic response contained no text block.");
   }

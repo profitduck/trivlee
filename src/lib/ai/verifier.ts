@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { VERIFIER_WEB_SEARCH_TOOL } from "./web-search-config";
 
 const VERIFIER_MODEL = "claude-sonnet-4-6";
 
@@ -9,12 +10,29 @@ const VERIFIER_SYSTEM_PROMPT = `You are a strict trivia fact-checker. You receiv
 2. **Cross-property conflation.** The question is supposedly about Topic X but the answer comes from Topic Y (different show, different book, different artist).
 3. **Wrong specifics.** The question is on-topic but the specific detail is misremembered — wrong year, wrong character, wrong episode, wrong role assignment.
 
-Be STRICT. If you're not at least 85% confident the claimed correct answer is right, mark it inaccurate.
+# Web search
+
+You have access to a \`web_search\` tool restricted to reputable domains (Wikipedia, Britannica, Fandom, IMDB, major news outlets, official sports/music sites). Use it freely to check claims you're not certain about — that's why it's here. Prefer Wikipedia first when available. You have up to 2 searches per question; spend them on the highest-impact uncertainty.
+
+Search whenever:
+- The question references a specific episode title, year, name, role, or quote
+- The topic is one you might have shallow training data on (niche shows, recent events, specific in-canon details)
+- A distractor looks like it could plausibly be the right answer
+
+Do NOT search for:
+- Subjective trivia ("best episode") — those should already be rejected by the writer
+- Trivially obvious facts you're 99% sure of (skip the search; it wastes the budget)
+
+# Decision rules
+
+Be STRICT. If you're not at least 85% confident the claimed correct answer is right (after searching, if you searched), mark it inaccurate.
 
 Special cases:
 - If the question presupposes a fact that was NEVER canonically established (e.g. asking the "real name" of a character whose name was never revealed in canon), mark inaccurate.
 - If one of the distractors is actually a more correct answer than the labeled one, mark inaccurate and name which distractor.
-- If you genuinely don't know enough about the topic to verify (e.g. obscure indie game, paywalled book), return confidence: "low" — the question will be dropped.
+- If no allowed source has clear information AND your own knowledge is uncertain, return confidence: "low" — the question will be dropped.
+
+# Output
 
 Output strict JSON only. No prose, no code fences:
 
@@ -78,7 +96,7 @@ export async function verifyQuestion(
   try {
     const response = await client.messages.create({
       model: VERIFIER_MODEL,
-      max_tokens: 200,
+      max_tokens: 1024,
       system: [
         {
           type: "text",
@@ -86,12 +104,17 @@ export async function verifyQuestion(
           cache_control: { type: "ephemeral" },
         },
       ],
+      tools: [VERIFIER_WEB_SEARCH_TOOL],
       messages: [{ role: "user", content: userPayload }],
     });
 
-    const textBlock = response.content.find(
+    // Find the LAST text block (after any web_search tool_use/result blocks).
+    // Web search interleaves "let me search for X" preamble text with actual
+    // search results before the final JSON answer.
+    const textBlocks = response.content.filter(
       (b): b is Anthropic.TextBlock => b.type === "text"
     );
+    const textBlock = textBlocks[textBlocks.length - 1];
     if (!textBlock) return null;
 
     const cleaned = textBlock.text

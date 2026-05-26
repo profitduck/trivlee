@@ -20,6 +20,21 @@ Anchor questions to these reference points:
 
 A given set must be TIGHTLY CLUSTERED around the requested difficulty (±1), not spread across the range. Difficulty 8 means every question is 7-9, not a mix of 3s and 10s.
 
+# Web search (use sparingly)
+
+You have access to a \`web_search\` tool restricted to reputable sources (Wikipedia, Britannica, Fandom wikis, IMDB, major news outlets, official sports/music sites). Budget: 5 searches total across the whole batch — spend them on the highest-uncertainty facts. Prefer Wikipedia first when relevant.
+
+When to search:
+- Episode-specific quotes, role assignments, or named items you're not 100% sure of
+- Specific years, dates, scores, or numeric facts at difficulty ≥ 6
+- Niche topics where your training data is shallow
+
+When NOT to search:
+- Trivially obvious facts (it wastes the budget)
+- Subjective questions (already forbidden)
+
+If a search shows your candidate answer is wrong, REWRITE the question with the correct fact OR pick a different one. Never write a question whose answer contradicts the search result.
+
 # Multi-topic requests
 
 If the \`topic\` field contains multiple distinct subjects separated by commas, semicolons, "and", "+", "&", "/", or newlines, treat it as a multi-topic match.
