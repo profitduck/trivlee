@@ -1,7 +1,9 @@
 import "server-only";
 import { mockGenerate } from "./mock";
-import { anthropicGenerate } from "./anthropic";
+import { runPipeline, type PhaseHook } from "./pipeline";
 import type { GenerationRequest, GenerationResponse } from "./types";
+
+export type { PhaseHook, PipelinePhase } from "./pipeline";
 
 /**
  * AI generation error. Thrown to the caller so the UI can show a real
@@ -14,8 +16,14 @@ export class AIGenerationError extends Error {
   }
 }
 
+/**
+ * Generate a question set. Internally runs the 3-stage research → validate →
+ * write pipeline. The optional `onPhase` callback lets the caller write the
+ * current phase to the DB so the client can show real-time progress.
+ */
 export async function generateQuestions(
-  req: GenerationRequest
+  req: GenerationRequest,
+  onPhase?: PhaseHook
 ): Promise<GenerationResponse> {
   const useMock = process.env.USE_MOCK_AI !== "false";
   if (useMock) return mockGenerate(req);
@@ -27,9 +35,9 @@ export async function generateQuestions(
   }
 
   try {
-    return await anthropicGenerate(req);
+    return await runPipeline(req, onPhase);
   } catch (err) {
-    console.error("[generator] anthropicGenerate threw:", err);
+    console.error("[generator] runPipeline threw:", err);
     throw new AIGenerationError(
       "The AI couldn't be reached. Please try again in a moment.",
       err

@@ -5,8 +5,12 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { AIGenerationError, generateQuestions, normalizeTopic } from "@/lib/ai/generator";
-import { verifyQuestion } from "@/lib/ai/verifier";
+import {
+  AIGenerationError,
+  generateQuestions,
+  normalizeTopic,
+  type PipelinePhase,
+} from "@/lib/ai/generator";
 import { reserveAIGenerationSlot } from "@/lib/rate-limit";
 import {
   addToBank,
@@ -19,14 +23,24 @@ import type {
   PerQuestionFormat,
 } from "@/lib/ai/types";
 
+/**
+ * Visible generation phases for the client polling endpoint. The pipeline
+ * stages (researching/validating/writing) match what the 3-stage pipeline is
+ * actually doing on the server. `starting` and `saving` bookend the pipeline
+ * (the lightweight setup before stage 1, and the DB writes after stage 3).
+ */
 export type GenerationPhase =
   | "starting"
-  | "drafting"
-  | "verifying"
-  | "backfilling"
+  | "researching"
+  | "validating"
+  | "writing"
   | "saving";
 
-async function setPhase(challengeId: string, phase: GenerationPhase | null, errorMsg?: string) {
+async function setPhase(
+  challengeId: string,
+  phase: GenerationPhase | null,
+  errorMsg?: string
+) {
   // `failed:<message>` is the convention for surfacing errors via the same column.
   const value = phase === null && errorMsg ? `failed:${errorMsg}` : phase;
   await query(
@@ -52,62 +66,6 @@ interface CreateChallengeInput {
 
 function generateInviteToken(): string {
   return randomBytes(16).toString("base64url");
-}
-
-const OVERSAMPLE_RATIO = 1.3; // request 30% more than the target to absorb verifier drops
-const MAX_OVERSAMPLE = 25;
-const MAX_BACKFILL_ROUNDS = 1;
-
-function computeOversample(target: number): number {
-  return Math.min(MAX_OVERSAMPLE, Math.ceil(target * OVERSAMPLE_RATIO));
-}
-
-/**
- * Verify a batch of generated questions against the Sonnet verifier.
- * Returns the survivors (accurate=true, confidence=high) and the dropped ones.
- */
-async function verifyBatch(
-  questions: GeneratedQuestion[],
-  topic: string
-): Promise<{
-  survivors: GeneratedQuestion[];
-  dropped: { question: string; reason: string }[];
-  latencyMs: number;
-}> {
-  const start = performance.now();
-  const verifications = await Promise.all(
-    questions.map((q) =>
-      verifyQuestion({
-        topic,
-        question: q.question,
-        correctAnswer: q.correct_answer,
-        distractors: q.distractors,
-        sourceHint: q.source_hint,
-      })
-    )
-  );
-  const survivors: GeneratedQuestion[] = [];
-  const dropped: { question: string; reason: string }[] = [];
-  questions.forEach((q, i) => {
-    const v = verifications[i];
-    if (v === null) {
-      survivors.push(q);
-      return;
-    }
-    if (!v.accurate || v.confidence !== "high") {
-      dropped.push({ question: q.question.slice(0, 80), reason: v.reason });
-      console.warn(
-        `[verifier] dropped (accurate=${v.accurate}, confidence=${v.confidence}): "${q.question.slice(0, 60)}…" — ${v.reason}`
-      );
-      return;
-    }
-    survivors.push(q);
-  });
-  return {
-    survivors,
-    dropped,
-    latencyMs: Math.round(performance.now() - start),
-  };
 }
 
 export async function createChallenge(input: CreateChallengeInput) {
@@ -232,14 +190,13 @@ export async function createChallenge(input: CreateChallengeInput) {
   // safe). If we fail, we stamp phase='failed:<msg>' instead of throwing.
   after(async () => {
     try {
-      await runAIGeneration({
+      await runPipelineForChallenge({
         challengeId,
         topic,
         topicNormalized,
         input,
         bankQuestions,
         bankIds,
-        needFromAI,
       });
     } catch (err) {
       const msg =
@@ -256,30 +213,40 @@ export async function createChallenge(input: CreateChallengeInput) {
   redirect(`/challenges/${challengeId}`);
 }
 
-interface RunAIGenerationArgs {
+interface RunPipelineArgs {
   challengeId: string;
   topic: string;
   topicNormalized: string;
   input: CreateChallengeInput;
   bankQuestions: GeneratedQuestion[];
   bankIds: string[];
-  needFromAI: number;
 }
 
-async function runAIGeneration(args: RunAIGenerationArgs): Promise<void> {
+async function runPipelineForChallenge(args: RunPipelineArgs): Promise<void> {
   const { challengeId, topic, topicNormalized, input, bankQuestions, bankIds } = args;
+  const requestedFromAI = input.numQuestions - bankQuestions.length;
 
-  // Oversample by ~30% so the verifier's drops usually leave us with enough.
-  const oversampleCount = computeOversample(args.needFromAI);
+  // Wire the pipeline stages to the challenge row so the client's polling
+  // gets real phase updates as the work progresses.
+  const phaseHook = async (p: PipelinePhase) => {
+    await setPhase(challengeId, p);
+  };
 
-  await setPhase(challengeId, "drafting");
-  const result = await generateQuestions({
-    topic,
-    difficulty: input.difficulty,
-    format: input.format,
-    count: oversampleCount,
-  });
+  // ─── Run the 3-stage pipeline ────────────────────────────────────────────
+  // generateQuestions() internally orchestrates: researcher → validator → writer.
+  // The pipeline oversamples facts (2.5x) so the writer typically has enough
+  // verified material to hit the requested count without a backfill round.
+  const result = await generateQuestions(
+    {
+      topic,
+      difficulty: input.difficulty,
+      format: input.format,
+      count: requestedFromAI,
+    },
+    phaseHook
+  );
 
+  // ─── Handle pipeline outcomes ────────────────────────────────────────────
   let topicInterpretation: string;
   let knowledgeWarning: string | null = null;
   let difficultyDelivered = input.difficulty;
@@ -288,6 +255,8 @@ async function runAIGeneration(args: RunAIGenerationArgs): Promise<void> {
   let aiQuestions: GeneratedQuestion[] = [];
 
   if (!result.topic_safe || result.questions.length === 0) {
+    // Pipeline produced nothing usable. If the bank had ANY questions, fall
+    // back to a smaller bank-only match; otherwise cancel.
     if (bankQuestions.length === 0) {
       await query(
         `UPDATE challenges
@@ -297,13 +266,16 @@ async function runAIGeneration(args: RunAIGenerationArgs): Promise<void> {
                generation_phase = NULL,
                generation_phase_at = now()
          WHERE id = $1`,
-        [challengeId, result.topic_interpretation, result.rejection_reason]
+        [
+          challengeId,
+          result.topic_interpretation,
+          result.rejection_reason ?? result.knowledge_warning ?? "Couldn't generate verified questions for this topic.",
+        ]
       );
       return;
     }
-    // Soft fallback: use just the bank questions and tell the user.
     topicInterpretation = result.topic_interpretation;
-    knowledgeWarning = `Only ${bankQuestions.length} questions available — the AI couldn't add more. ${result.rejection_reason ?? ""}`;
+    knowledgeWarning = `Only ${bankQuestions.length} questions available — the AI couldn't add more. ${result.rejection_reason ?? result.knowledge_warning ?? ""}`.trim();
     difficultyDelivered = result.difficulty_delivered;
     generationMeta = { latency_ms: result.meta.latency_ms, bank_used: bankQuestions.length };
   } else {
@@ -314,69 +286,25 @@ async function runAIGeneration(args: RunAIGenerationArgs): Promise<void> {
     generationMeta = {
       latency_ms: result.meta.latency_ms,
       bank_used: bankQuestions.length,
-      oversample_target: oversampleCount,
-      oversample_received: result.questions.length,
+      research_ms: result.meta.research_ms,
+      validate_ms: result.meta.validate_ms,
+      write_ms: result.meta.write_ms,
+      facts_researched: result.meta.facts_researched,
+      facts_validated: result.meta.facts_validated,
     };
-    generatedBy = bankQuestions.length > 0
-      ? `mixed: ${result.meta.generated_by} + bank (${bankQuestions.length}/${input.numQuestions})`
-      : result.meta.generated_by;
-
-    // ─── Verification pass ──────────────────────────────────────────────
-    await setPhase(challengeId, "verifying");
-    const initial = await verifyBatch(aiQuestions, topic);
-    aiQuestions = initial.survivors;
-    let totalDropped = initial.dropped.length;
-    let totalVerifyLatencyMs = initial.latencyMs;
-    let backfillsAttempted = 0;
-    let backfillsRecovered = 0;
-
-    // ─── Backfill if oversampling wasn't enough ────────────────────────
-    while (
-      bankQuestions.length + aiQuestions.length < input.numQuestions &&
-      backfillsAttempted < MAX_BACKFILL_ROUNDS
-    ) {
-      const shortfall =
-        input.numQuestions - bankQuestions.length - aiQuestions.length;
-      const refillCount = computeOversample(shortfall);
-      backfillsAttempted++;
-      await setPhase(challengeId, "backfilling");
-      try {
-        const refillResult = await generateQuestions({
-          topic,
-          difficulty: input.difficulty,
-          format: input.format,
-          count: refillCount,
-        });
-        if (refillResult.topic_safe && refillResult.questions.length > 0) {
-          const refillVerify = await verifyBatch(refillResult.questions, topic);
-          aiQuestions = [...aiQuestions, ...refillVerify.survivors];
-          backfillsRecovered += refillVerify.survivors.length;
-          totalDropped += refillVerify.dropped.length;
-          totalVerifyLatencyMs += refillVerify.latencyMs;
-        }
-      } catch (err) {
-        console.warn("Backfill round failed; continuing with current questions:", err);
-        break;
-      }
-    }
-
-    generationMeta = {
-      ...generationMeta,
-      verifier_dropped: totalDropped,
-      verifier_latency_ms: totalVerifyLatencyMs,
-      backfills_attempted: backfillsAttempted,
-      backfills_recovered: backfillsRecovered,
-    };
+    generatedBy =
+      bankQuestions.length > 0
+        ? `mixed: ${result.meta.generated_by} + bank (${bankQuestions.length}/${input.numQuestions})`
+        : result.meta.generated_by;
 
     const finalAvailable = bankQuestions.length + aiQuestions.length;
     if (finalAvailable < input.numQuestions) {
-      const note = `Fact-checker kept only ${finalAvailable} of ${input.numQuestions} requested questions.`;
+      const note = `Delivered ${finalAvailable} of ${input.numQuestions} requested — the rest didn't pass fact-checking.`;
       knowledgeWarning = knowledgeWarning ? `${knowledgeWarning} ${note}` : note;
     }
   }
 
-  // Safety net — verification may have dropped every AI question. If that
-  // happens AND the bank had nothing, cancel the match.
+  // Safety net — pipeline gave nothing AND bank had nothing.
   if (aiQuestions.length === 0 && bankQuestions.length === 0) {
     await query(
       `UPDATE challenges
@@ -389,12 +317,13 @@ async function runAIGeneration(args: RunAIGenerationArgs): Promise<void> {
       [
         challengeId,
         topicInterpretation,
-        "Every generated question failed fact-checking. Try a different topic, lower difficulty, or come back later.",
+        "No verified questions could be produced. Try a different topic or lower difficulty.",
       ]
     );
     return;
   }
 
+  // ─── Persist ─────────────────────────────────────────────────────────────
   await setPhase(challengeId, "saving");
   await persistQuestionSet({
     challengeId,
@@ -409,7 +338,6 @@ async function runAIGeneration(args: RunAIGenerationArgs): Promise<void> {
     requestedCount: input.numQuestions,
   });
 
-  // ─── Finalize: clear the phase so the page renders the normal match view.
   await query(
     `UPDATE challenges
        SET topic_interpretation = $2,
@@ -451,7 +379,8 @@ async function persistQuestionSet(a: PersistArgs): Promise<void> {
   );
   const setId = setInsert.rows[0].id;
 
-  // Add ALL verified AI questions to the bank — including oversample extras.
+  // Add ALL verified AI questions to the bank — including any extras the
+  // pipeline produced beyond the requested count.
   const newBankIds = await addToBank(a.topicNormalized, a.difficulty, a.aiQuestions);
 
   // Trim AI questions for THIS match. Bank-drawn questions all stay.

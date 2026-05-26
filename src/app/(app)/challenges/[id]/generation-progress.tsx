@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Sparkles,
-  PencilLine,
+  Search,
   ShieldCheck,
-  RotateCw,
+  PencilLine,
   Database,
   Check,
   Loader2,
@@ -17,7 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-type Phase = "starting" | "drafting" | "verifying" | "backfilling" | "saving";
+type Phase = "starting" | "researching" | "validating" | "writing" | "saving";
 
 interface PhaseResponse {
   phase: Phase | null | "failed";
@@ -25,24 +25,24 @@ interface PhaseResponse {
   error?: string;
 }
 
-const PHASE_ORDER: Phase[] = ["drafting", "verifying", "backfilling", "saving"];
+const PHASE_ORDER: Phase[] = ["researching", "validating", "writing", "saving"];
 
 const PHASE_COPY: Record<Phase, { label: string; description: string }> = {
   starting: {
     label: "Starting",
     description: "Setting up — this usually takes a second.",
   },
-  drafting: {
-    label: "Drafting questions",
-    description: "Generating from primary sources via web search.",
+  researching: {
+    label: "Researching facts",
+    description: "Gathering source-able claims about your topic.",
   },
-  verifying: {
-    label: "Fact-checking",
-    description: "Cross-checking every answer with a second model.",
+  validating: {
+    label: "Validating facts",
+    description: "Cross-checking each claim against reputable sources.",
   },
-  backfilling: {
-    label: "Adding replacements",
-    description: "A few questions didn't pass — generating fresh ones.",
+  writing: {
+    label: "Writing questions",
+    description: "Constructing questions from verified facts only.",
   },
   saving: {
     label: "Saving match",
@@ -166,25 +166,9 @@ export function GenerationProgress({
         </div>
 
         <div className="grid gap-2 text-sm text-left max-w-xs mx-auto">
-          {PHASE_ORDER.map((p) => {
-            // Backfilling is conditional — only show it as visited once it's
-            // actually been entered. Otherwise it just clutters the timeline.
-            if (p === "backfilling" && activePhase !== "backfilling") {
-              const skipPosition = PHASE_ORDER.indexOf(activePhase);
-              const myPosition = PHASE_ORDER.indexOf("backfilling");
-              if (skipPosition < myPosition) return null;
-              // We've passed it — but if we never entered it (the common
-              // case), there's no value in showing it as "done".
-              return null;
-            }
-            return (
-              <PhaseRow
-                key={p}
-                phase={p}
-                state={phaseState(p, activePhase)}
-              />
-            );
-          })}
+          {PHASE_ORDER.map((p) => (
+            <PhaseRow key={p} phase={p} state={phaseState(p, activePhase)} />
+          ))}
         </div>
 
         {elapsed > 180_000 && (
@@ -250,9 +234,9 @@ function PhaseRow({
 
 const ICONS: Record<Phase, React.ComponentType<{ className?: string }>> = {
   starting: Sparkles,
-  drafting: PencilLine,
-  verifying: ShieldCheck,
-  backfilling: RotateCw,
+  researching: Search,
+  validating: ShieldCheck,
+  writing: PencilLine,
   saving: Database,
 };
 
