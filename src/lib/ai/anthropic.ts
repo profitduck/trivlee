@@ -203,6 +203,31 @@ function looksLikeTrickAnswer(answer: string): boolean {
   return ANSWER_TRICK_BLOCKLIST.some((re) => re.test(answer));
 }
 
+/**
+ * Detects multiple-choice questions where the correct answer is conspicuously
+ * longer than the distractors — a giveaway pattern we keep seeing where the
+ * model breaks structural parallelism in the right answer. Example:
+ *   distractors: ["Joe Pesci", "Bob Saget", "Christopher Lloyd"]      (avg 12)
+ *   correct: "Danny DeVito plays Frank Reynolds in the FX sitcom..."  (50)
+ */
+function looksLikeLengthGiveaway(
+  correctAnswer: string,
+  distractors: string[]
+): boolean {
+  // Trivia MC always has 3 distractors. Anything less is malformed; skip.
+  if (distractors.length < 3) return false;
+  const avg =
+    distractors.reduce((s, d) => s + d.length, 0) / distractors.length;
+  const longest = Math.max(...distractors.map((d) => d.length));
+  // Catches both magnitude (1.4x avg) and absolute outlier (10+ chars longer
+  // than the longest distractor). Tuned against real giveaway: 52-char
+  // correct answer vs 30/38/39 distractors (avg 35.67, longest 39).
+  return (
+    correctAnswer.length >= avg * 1.4 &&
+    correctAnswer.length - longest >= 10
+  );
+}
+
 function normalizeQuestion(
   q: RawQuestion,
   req: GenerationRequest,
@@ -230,6 +255,22 @@ function normalizeQuestion(
   if (looksLikeTrickAnswer(q.correct_answer as string)) {
     console.warn(
       `Dropping trick question: "${(q.question as string).slice(0, 80)}" → answer "${(q.correct_answer as string).slice(0, 80)}"`
+    );
+    return null;
+  }
+
+  // Drop MC questions where the correct answer is conspicuously longer than
+  // the distractors (structural giveaway — see looksLikeLengthGiveaway docs).
+  if (
+    Array.isArray(q.distractors) &&
+    q.distractors.length >= 2 &&
+    looksLikeLengthGiveaway(
+      q.correct_answer as string,
+      (q.distractors as unknown[]).filter((d): d is string => typeof d === "string")
+    )
+  ) {
+    console.warn(
+      `Dropping length-giveaway question: "${(q.question as string).slice(0, 80)}" → answer is much longer than distractors`
     );
     return null;
   }

@@ -106,7 +106,7 @@ The correct answer must require knowledge to identify, not deduction by eliminat
 
 4. **Strip brand prefixes from model-name distractors** when the question is about brand-model association. Use "Camry" not "Toyota Camry" if the answer is a different brand's model.
 
-5. **Options should be similar in length, register, and specificity.** Don't make the correct answer noticeably longer, more detailed, or more proper-noun-loaded than the distractors. A 5-word answer alongside three 1-word distractors is a giveaway.
+5. **Structural parallelism is mandatory.** All four options must share the same grammatical shape, length range, and level of detail. If three distractors are "X and Y" (two-name format), the correct answer must also be "X and Y" — never "X plays the first one; Y plays the second one." If three distractors are bare nouns ("Civic", "Camry"), the correct answer must also be a bare noun. The correct answer must be at most ~1.5x the average distractor length. If you cannot fit the right answer into the same shape as the distractors, REWRITE the question so a one-word/one-phrase answer is possible (e.g. ask about just one of the two twins instead of "which actor plays the twins"). A length or format mismatch IS a giveaway — players will pick the odd one out without knowing the fact.
 
 6. **Do not include the correct answer (or a paraphrase of it) inside the \`distractors\` array.** Distractors are wrong answers only.
 
