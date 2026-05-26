@@ -196,6 +196,18 @@ const SOURCE_HINT_BLOCKLIST = [
   /\bmultiple episodes\b/i,
   /\bthroughout (the )?series\b/i,
   /\bacross the series\b/i,
+  // Vague attribution — "widely reported" / "reportedly" / "approximately"
+  // are tells that the model couldn't cite a primary source. Real Seinfeld
+  // example: "Widely reported production fact; Jerry Seinfeld declined an
+  // offer of approximately $110 million for a Season 10." The number is
+  // disputed across sources — these questions are unreliable.
+  /\bwidely reported\b/i,
+  /\bcommonly cited\b/i,
+  /\bgenerally agreed\b/i,
+  /\breportedly\b/i,
+  /\bapproximately\b/i,
+  /\brumored\b/i,
+  /\bsources (say|claim|report)\b/i,
 ];
 
 function looksLikeMetaCommentary(hint: string): boolean {
@@ -248,6 +260,38 @@ function looksLikeLengthGiveaway(
   );
 }
 
+/**
+ * Detects MC questions where the correct answer (or the meaningful part of it)
+ * appears verbatim inside the question text. Real example:
+ *   Q: "Which character does Elaine work for at the J. Peterman catalog?"
+ *   A: "J. Peterman"
+ * The brand name "J. Peterman" is in the question itself — the player just
+ * needs to read it off. The prompt forbids this but the model still does it.
+ *
+ * Normalisation: lowercase + strip punctuation so "J. Peterman" matches
+ * "j peterman" in the question.
+ */
+const ANSWER_IN_QUESTION_STOPWORDS = new Set([
+  "yes", "no", "true", "false",
+  "the", "and", "of", "or", "a", "an",
+  "it", "its", "that", "this", "they",
+]);
+
+function looksLikeAnswerInQuestion(question: string, answer: string): boolean {
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const q = normalize(question);
+  const a = normalize(answer);
+  // Short answers (numbers, single letters) match too easily by coincidence.
+  if (a.length < 3) return false;
+  if (ANSWER_IN_QUESTION_STOPWORDS.has(a)) return false;
+  return q.includes(a);
+}
+
 function normalizeQuestion(
   q: RawQuestion,
   req: GenerationRequest,
@@ -291,6 +335,15 @@ function normalizeQuestion(
   ) {
     console.warn(
       `Dropping length-giveaway question: "${(q.question as string).slice(0, 80)}" → answer is much longer than distractors`
+    );
+    return null;
+  }
+
+  // Drop questions where the answer is leaked into the question text.
+  // ("Which character does Elaine work for at the J. Peterman catalog?" → answer "J. Peterman".)
+  if (looksLikeAnswerInQuestion(q.question as string, q.correct_answer as string)) {
+    console.warn(
+      `Dropping answer-in-question leak: "${(q.question as string).slice(0, 80)}" → answer "${(q.correct_answer as string).slice(0, 40)}" appears in question`
     );
     return null;
   }

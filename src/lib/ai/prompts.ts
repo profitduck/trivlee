@@ -20,6 +20,8 @@ Anchor questions to these reference points:
 
 A given set must be TIGHTLY CLUSTERED around the requested difficulty (±1), not spread across the range. Difficulty 8 means every question is 7-9, not a mix of 3s and 10s.
 
+**Stop-test for high difficulty (≥8).** Before keeping a question at D8+, ask yourself: "Would a casual viewer who watched a few episodes know this?" If yes, the question belongs at D3-5, NOT D8. Famous reveals like "Kramer's first name is Cosmo" or "Norm's wife is Vera" are D5-6 material — at D8+ ask about the EPISODE the reveal happened in, the specific dialog around it, or a less-quoted detail from that scene. A D9 question should be answerable by maybe 5% of the show's audience. If your candidate would be answerable by 50%, it's not D9. Common wrong calibrations: famous first names, the bar/restaurant name, the lead actor's real name, the show's network — these are D1-4 regardless of how niche the show is.
+
 # Web search (use sparingly)
 
 You have access to a \`web_search\` tool restricted to reputable sources (Wikipedia, Britannica, Fandom wikis, IMDB, major news outlets, official sports/music sites). Budget: 5 searches total across the whole batch — spend them on the highest-uncertainty facts. Prefer Wikipedia first when relevant.
@@ -82,6 +84,10 @@ If the \`topic\` field contains multiple distinct subjects separated by commas, 
 
 6. **Don't approximate episode-specific quotes, role assignments, or single-scene gags.** If you can't recall the exact phrasing or which character did what in a specific episode, skip the question — don't substitute a plausible-sounding answer. Example: if you remember "the gang assigned themselves roles in S4E2" but can't recall the exact role Dennis claimed, do NOT fill in a guess. Pick a fact you're certain of.
 
+7. **Don't embellish "Character X says Y" claims.** This is one of the most common hallucinations. You might correctly remember that an event happened (George cheated in The Contest; this is confirmed in The Finale) and then INVENT a quote or character statement around it (George "named Jerry as the true winner"). The event happening does not authorize you to put words in characters' mouths. If you can't quote the specific dialog directly from canon, ask about something else. The pattern "Who did character X say Y about?" is high-risk — web-search the exact dialog before using it, and if the search doesn't return the specific line, DROP the question.
+
+8. **Disputed numbers stay out.** Production trivia like salaries, ratings, viewer counts, and dollar amounts are often reported differently across sources ($5M/episode vs $110M total vs $100M offer for Seinfeld Season 10, etc.). If your candidate fact has multiple commonly-cited values, DO NOT use it — pick a fact with a single canonical value. If you can only find phrasing like "widely reported", "reportedly", or "approximately", that's a tell the number is disputed; drop the question.
+
 # Knowledge confidence
 Before generating, assess whether you have enough reliable knowledge of the topic to produce \`count\` questions at the requested \`difficulty\`.
 
@@ -122,7 +128,12 @@ If the topic is too vague to interpret confidently (e.g. "stuff"), set \`topic_s
 # CRITICAL: Avoiding answer leakage in multiple choice
 The correct answer must require knowledge to identify, not deduction by elimination. Before finalizing any MC question, verify ALL of these:
 
-1. **The correct answer (or any obvious form of it) MUST NOT appear in the question text.** Example of a leak: "Which Honda model was introduced in 1972?" — answer "Civic". The brand "Honda" is already named, so the player has narrowed to Honda-known facts. Either ask "Which manufacturer introduced the Civic in 1972?" (answer = Honda, distractors = Toyota/Ford/Nissan) OR ask "Which 1972-introduced compact car remains in production today?" without naming the brand.
+1. **The correct answer MUST NOT appear in the question text — not even as a substring.** Real failure: "Which character does Elaine work for at the J. Peterman catalog?" with answer "J. Peterman". The brand name "J. Peterman" is literally in the question; the player just reads it off the question and picks the matching option. Rewrite as: "Which character does Elaine work for after leaving Pendant Publishing?" (answer = J. Peterman, distractors = other Seinfeld bosses) OR "Which Elaine boss founded a clothing catalog known for verbose product copy?" Same principle if a brand, year, or proper noun appears in BOTH the question and the answer: rewrite to remove it from the question.
+
+   Other examples:
+   - "Which Honda model was introduced in 1972?" answer "Civic" — Honda is in the question, fine; but if the answer were "Honda Civic", that's a leak.
+   - "What year was Seinfeld's first episode in 1989?" answer "1989" — flagrant leak.
+   - "Who plays Frank Reynolds in It's Always Sunny in Philadelphia?" answer "Danny DeVito" — fine, no name overlap.
 
 2. **All four options (correct + 3 distractors) MUST be the SAME KIND of thing.** If the question asks "Which manufacturer makes X?", every option must be a manufacturer. If it asks "Which car model is Y?", every option must be a car model. Never mix categories (e.g. answer is a model, distractors are a mix of models and manufacturers).
 
