@@ -25,10 +25,10 @@ export function SignUpForm({ next }: { next: string }) {
           autoComplete="username"
           autoFocus
           required
-          pattern="^[a-z0-9_]{3,20}$"
+          pattern="^[a-zA-Z0-9_]{3,20}$"
         />
         <p className="text-xs text-muted-foreground">
-          3-20 characters. Lowercase letters, digits, or underscores.
+          3-20 characters. Letters, digits, or underscores. Not case-sensitive.
         </p>
       </div>
 
