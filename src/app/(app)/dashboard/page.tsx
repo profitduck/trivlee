@@ -162,13 +162,13 @@ export default async function DashboardPage() {
       <section className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm uppercase tracking-wider text-muted-foreground font-semibold">
-            Welcome back
+            {greetingLabel(stats.matches_played)}
           </p>
           <h1 className="font-display text-4xl sm:text-5xl font-extrabold tracking-tighter mt-1">
-            Ready for a match, {user.display_name ?? user.username}?
+            {greetingHeadline(user.display_name ?? user.username, stats.matches_played, stats.wins)}
           </h1>
         </div>
-        <Button asChild size="lg" className="gap-2">
+        <Button asChild size="lg" className="gap-2 shadow-lg hover:shadow-primary/40 transition-shadow">
           <Link href="/challenges/new">
             <Plus className="size-5" />
             New match
@@ -311,11 +311,21 @@ export default async function DashboardPage() {
         <h2 className="font-display text-2xl font-bold mb-4">Your matches</h2>
         {activeChallenges.length === 0 ? (
           <Card className="border-dashed">
-            <CardContent className="p-10 text-center">
-              <p className="text-muted-foreground mb-4">
-                No matches yet. Pick a topic and invite some friends.
-              </p>
-              <Button asChild>
+            <CardContent className="p-10 text-center space-y-3">
+              <div className="size-14 mx-auto rounded-2xl bg-primary/10 grid place-items-center">
+                <Plus className="size-7 text-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="font-display text-lg font-bold">
+                  {pendingInvites.length > 0
+                    ? "Join an invite above, or start your own."
+                    : "Your dojo awaits."}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Pick a topic, dial the difficulty, send the link.
+                </p>
+              </div>
+              <Button asChild size="lg">
                 <Link href="/challenges/new">Start your first match</Link>
               </Button>
             </CardContent>
@@ -354,6 +364,36 @@ function StatCard({
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * Pick a greeting label + headline based on the user's current state. New
+ * users see encouragement; returning users get a slight tease that scales
+ * with their wins. Deterministic per day so the page doesn't keep
+ * shuffling on every refresh.
+ */
+function greetingLabel(matchesPlayed: number): string {
+  if (matchesPlayed === 0) return "Welcome to Trivlee";
+  if (matchesPlayed < 5) return "Welcome back";
+  return pickByDay(["Welcome back", "Look who's back", "Ready for round two?", "Game on"]);
+}
+
+function greetingHeadline(name: string, matchesPlayed: number, wins: number): string {
+  if (matchesPlayed === 0) return `Let's go, ${name}.`;
+  if (wins === 0) return `Time for your first win, ${name}?`;
+  return pickByDay([
+    `Ready for a match, ${name}?`,
+    `What's the topic today, ${name}?`,
+    `Pick a topic, ${name}.`,
+    `Let's see what you've got, ${name}.`,
+  ]);
+}
+
+function pickByDay<T>(arr: readonly T[]): T {
+  // Deterministic by calendar day (UTC) so the page doesn't reshuffle on
+  // every render; new options surface as the day rolls over.
+  const day = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+  return arr[day % arr.length];
 }
 
 /**

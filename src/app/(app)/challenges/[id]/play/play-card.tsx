@@ -1,13 +1,27 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
-import { Check, X, Clock, Hourglass, ArrowRight, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { Check, X, Clock, Hourglass, ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { submitAnswer, type SubmitAnswerResult } from "./actions";
+
+// Rotating playful headlines for feedback — keeps the same panel from feeling
+// monotonous across a 10-question match. Picked once per question render via
+// useMemo, so the headline doesn't reroll on every state change.
+const CORRECT_HEADLINES = ["Nailed it!", "Boom!", "Sharp!", "On it!", "Easy.", "Locked in!", "Bingo!"];
+const PARTIAL_HEADLINES = ["Almost!", "Half right.", "Decent shot.", "Close enough."];
+const WRONG_HEADLINES   = ["Not quite.", "Close!", "Oof.", "So close.", "Tough one."];
+
+function pickRandom<T>(arr: readonly T[], seed: string): T {
+  // Deterministic by seed (question_id) so refreshing doesn't reroll.
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  return arr[Math.abs(hash) % arr.length];
+}
 
 interface PlayCardProps {
   challengeId: string;
@@ -135,6 +149,20 @@ export function PlayCard(props: PlayCardProps) {
   const partial = feedback && !feedback.grade.isCorrect && feedback.grade.score > 0;
   const totalUrgent = totalSecondsLeft != null && totalSecondsLeft <= 15;
 
+  // Pick a playful headline once per question render (deterministic by id).
+  const correctHeadline = useMemo(
+    () => pickRandom(CORRECT_HEADLINES, props.questionId),
+    [props.questionId]
+  );
+  const partialHeadline = useMemo(
+    () => pickRandom(PARTIAL_HEADLINES, props.questionId + "p"),
+    [props.questionId]
+  );
+  const wrongHeadline = useMemo(
+    () => pickRandom(WRONG_HEADLINES, props.questionId + "w"),
+    [props.questionId]
+  );
+
   return (
     <div className="space-y-6">
       {/* Whole-quiz countdown — sticky banner so it stays visible while playing */}
@@ -249,30 +277,52 @@ export function PlayCard(props: PlayCardProps) {
           {feedback && (
             <div
               className={cn(
-                "rounded-xl p-5 space-y-3",
+                "rounded-xl p-5 space-y-3 animate-[feedbackEnter_400ms_cubic-bezier(0.34,1.56,0.64,1)]",
                 isCorrect && "bg-chart-5/15 border-2 border-chart-5/40",
                 !isCorrect && partial && "bg-accent/30 border-2 border-accent",
                 !isCorrect && !partial && "bg-destructive/10 border-2 border-destructive/30"
               )}
             >
+              <style jsx>{`
+                @keyframes feedbackEnter {
+                  0%   { opacity: 0; transform: translateY(8px) scale(0.97); }
+                  60%  { opacity: 1; transform: translateY(-2px) scale(1.01); }
+                  100% { opacity: 1; transform: translateY(0)    scale(1);    }
+                }
+                @keyframes pointsPop {
+                  0%   { transform: scale(0.6); opacity: 0; }
+                  60%  { transform: scale(1.15); opacity: 1; }
+                  100% { transform: scale(1); opacity: 1; }
+                }
+                @keyframes iconPop {
+                  0%   { transform: scale(0) rotate(-90deg); }
+                  70%  { transform: scale(1.2) rotate(10deg); }
+                  100% { transform: scale(1) rotate(0deg); }
+                }
+              `}</style>
               <div className="flex items-center gap-2 font-display text-xl font-bold">
-                {isCorrect ? (
-                  <>
+                <span
+                  className="inline-block"
+                  style={{ animation: "iconPop 500ms cubic-bezier(0.34, 1.56, 0.64, 1)" }}
+                >
+                  {isCorrect ? (
                     <Check className="size-6 text-chart-5" />
-                    Correct!
-                  </>
-                ) : partial ? (
-                  <>
+                  ) : partial ? (
                     <Check className="size-6 text-accent-foreground" />
-                    Partial credit
-                  </>
-                ) : (
-                  <>
+                  ) : (
                     <X className="size-6 text-destructive" />
-                    Not quite
-                  </>
-                )}
-                <span className="ml-auto text-sm font-mono">
+                  )}
+                </span>
+                {isCorrect ? correctHeadline : partial ? partialHeadline : wrongHeadline}
+                <span
+                  className={cn(
+                    "ml-auto text-sm font-mono px-2 py-0.5 rounded-md tabular-nums",
+                    isCorrect && "bg-chart-5/25 text-chart-5",
+                    !isCorrect && partial && "bg-accent text-accent-foreground",
+                    !isCorrect && !partial && "bg-muted text-muted-foreground"
+                  )}
+                  style={{ animation: "pointsPop 600ms ease-out 100ms backwards" }}
+                >
                   +{feedback.grade.score.toFixed(2)}
                 </span>
               </div>
