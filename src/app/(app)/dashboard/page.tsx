@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight, AlertTriangle, Target, Flame, Crown } from "lucide-react";
+import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight, AlertTriangle, Target, Flame, Crown, Award, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import {
   sweepAutoCloseForUser,
   type PendingInvite,
 } from "@/lib/matches";
+import { getUserAchievements } from "@/lib/achievements";
 
 interface ChallengeRow {
   id: string;
@@ -137,10 +138,11 @@ export default async function DashboardPage() {
     failStuckGenerationsForUser(user.id),
     sweepAutoCloseForUser(user.id),
   ]);
-  const [challenges, pendingInvites, stats] = await Promise.all([
+  const [challenges, pendingInvites, stats, achievements] = await Promise.all([
     getMyChallenges(user.id),
     getPendingInvites(user.id),
     getLifetimeStats(user.id),
+    getUserAchievements(user.id),
   ]);
 
   // Stuck/failed matches are status='cancelled' AND generation_phase starts with
@@ -214,6 +216,37 @@ export default async function DashboardPage() {
                     Currently ranked <strong className="text-foreground">#{stats.global_rank}</strong> globally.
                   </p>
                 )}
+              </CardContent>
+            </Card>
+          </Link>
+        </section>
+      )}
+
+      {achievements.unlocked.length > 0 && (
+        <section>
+          <Link href="/achievements" className="block group">
+            <Card className="transition hover:shadow-md hover:border-primary/40">
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-primary/10 grid place-items-center shrink-0">
+                  <Award className="size-5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-display font-bold">
+                    {achievements.unlocked.length} achievement{achievements.unlocked.length === 1 ? "" : "s"} unlocked
+                    {achievements.recentlyUnlocked.size > 0 && (
+                      <span className="inline-flex items-center gap-1 ml-2 text-xs font-medium text-primary">
+                        <Sparkles className="size-3" />
+                        new!
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {achievements.locked.length > 0
+                      ? `${achievements.locked.length} more to go.`
+                      : "You unlocked them all. Wild."}
+                  </p>
+                </div>
+                <ArrowRight className="size-4 text-muted-foreground shrink-0" />
               </CardContent>
             </Card>
           </Link>
