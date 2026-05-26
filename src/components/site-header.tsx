@@ -21,9 +21,9 @@ export function SiteHeader({ user }: { user: SessionUser }) {
         <div className="flex items-center gap-4">
           {user.is_admin && (
             <Button variant="ghost" size="sm" asChild className="gap-1.5">
-              <Link href="/admin/reports">
+              <Link href="/admin">
                 <ShieldCheck className="size-4" />
-                <span className="hidden sm:inline">Moderation</span>
+                <span className="hidden sm:inline">Admin</span>
               </Link>
             </Button>
           )}
