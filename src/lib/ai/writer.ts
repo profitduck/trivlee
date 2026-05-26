@@ -17,6 +17,7 @@ import type {
 // well-formed questions. Haiku is 3x cheaper than Sonnet and faster; quality
 // is on par for this kind of structured transformation task.
 const WRITER_MODEL = "claude-haiku-4-5";
+const WRITER_TIMEOUT_MS = 35_000;
 
 /**
  * Speculative-writer extension to GeneratedQuestion: tags which input fact
@@ -101,7 +102,7 @@ export async function writeQuestions(input: WriterInput): Promise<WriterOutput> 
       ],
       // No tools — writer doesn't need web search.
       messages: [{ role: "user", content: userPayload }],
-    });
+    }, { maxRetries: 0, timeout: WRITER_TIMEOUT_MS });
   } catch (err) {
     if (err instanceof Anthropic.APIError) {
       throw new Error(`Writer API error ${err.status}: ${err.message}`);

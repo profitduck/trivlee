@@ -12,15 +12,15 @@ import type {
 
 // Hard ceiling on total pipeline wall time. Past this we surface a clean
 // failure instead of letting the user stare at the spinner indefinitely.
-// Anthropic's individual SDK calls have their own 10-minute default timeout;
-// this is the orchestrator-level cap so we never burn that much.
+// Individual Anthropic calls also have request-level caps in each stage.
 //
 // Tuned against observed runs:
 //   - Healthy D1-7 match: ~30-60s
-//   - Healthy D8-10 or niche topic: ~60-120s
-//   - Pathological (sparse allowlist for topic, slow API): 180s+
-// 180s gives plenty of headroom for healthy runs and bails on the rest.
-const PIPELINE_TIMEOUT_MS = 180_000;
+//   - Healthy D1-7 match: ~25-55s
+//   - Healthy D8-10 or niche topic: ~55-100s
+// 125s gives headroom for one no-search fallback while keeping mobile users
+// out of the three-minute dead zone.
+const PIPELINE_TIMEOUT_MS = 125_000;
 
 class PipelineTimeoutError extends Error {
   constructor(elapsedMs: number) {

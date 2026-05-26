@@ -5,6 +5,9 @@ import { VALIDATOR_SYSTEM_PROMPT } from "./prompts";
 import { validatorSearchTool } from "./web-search-config";
 import type { FactCandidate, ValidatedFact } from "./types";
 
+const VALIDATOR_SEARCH_TIMEOUT_MS = 50_000;
+const VALIDATOR_FALLBACK_TIMEOUT_MS = 25_000;
+
 /**
  * Validator output (compact format). Each entry references its source fact
  * by index, so the model doesn't waste tokens echoing the claim text back.
@@ -20,12 +23,12 @@ interface CompactValidatorOutput {
  *
  * Cost note: one batched call instead of N parallel calls keeps cost predictable
  * and avoids contention on the web-search rate limit. Search budget is
- * difficulty-aware (5 for D1-7, 8 for D8-10) since niche/obscure facts need
- * more lookups while common-topic claims often need none.
+ * difficulty-aware and intentionally small; the validator should triage the
+ * highest-risk claims instead of exhaustively searching every fact.
  *
  * Format: input facts are sent in compact form ({c, s, d, t}). Output uses
  * index-referenced verdicts ({i, ok, conf}) instead of echoing each claim back —
- * this saves ~1500 tokens of output on a 25-fact batch (~20s wall time).
+ * this saves output tokens and wall time on each batch.
  */
 export async function validateFacts(
   topic: string,
@@ -50,24 +53,20 @@ export async function validateFacts(
 
   let response: Anthropic.Message;
   try {
-    response = await client.messages.create({
-      model: PIPELINE_MODEL,
-      max_tokens: 4000,
-      system: [
-        {
-          type: "text",
-          text: VALIDATOR_SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      tools: [validatorSearchTool(difficulty)],
-      messages: [{ role: "user", content: userPayload }],
-    });
+    response = await createValidatorMessage(client, userPayload, difficulty, true);
   } catch (err) {
-    if (err instanceof Anthropic.APIError) {
-      throw new Error(`Validator API error ${err.status}: ${err.message}`);
+    console.warn(
+      "[validator] web-search request failed or timed out; retrying without search:",
+      summarizeAnthropicError(err)
+    );
+    try {
+      response = await createValidatorMessage(client, userPayload, difficulty, false);
+    } catch (fallbackErr) {
+      if (fallbackErr instanceof Anthropic.APIError) {
+        throw new Error(`Validator API error ${fallbackErr.status}: ${fallbackErr.message}`);
+      }
+      throw fallbackErr;
     }
-    throw err;
   }
 
   const textBlocks = response.content.filter(
@@ -132,4 +131,38 @@ export async function validateFacts(
     validated,
     latencyMs: Math.round(performance.now() - start),
   };
+}
+
+async function createValidatorMessage(
+  client: Anthropic,
+  userPayload: string,
+  difficulty: number,
+  withSearch: boolean
+): Promise<Anthropic.Message> {
+  return client.messages.create(
+    {
+      model: PIPELINE_MODEL,
+      max_tokens: 3000,
+      system: [
+        {
+          type: "text",
+          text: VALIDATOR_SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      ...(withSearch ? { tools: [validatorSearchTool(difficulty)] } : {}),
+      messages: [{ role: "user", content: userPayload }],
+    },
+    {
+      maxRetries: 0,
+      timeout: withSearch ? VALIDATOR_SEARCH_TIMEOUT_MS : VALIDATOR_FALLBACK_TIMEOUT_MS,
+    }
+  );
+}
+
+function summarizeAnthropicError(err: unknown): string {
+  if (err instanceof Anthropic.APIError) {
+    return `${err.status}: ${err.message}`;
+  }
+  return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
 }

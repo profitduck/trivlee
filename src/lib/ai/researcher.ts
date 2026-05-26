@@ -9,10 +9,12 @@ import type {
   ResearchResponse,
 } from "./types";
 
-// We ask for ~2.5x the question count so the validator has slack to drop facts
-// without leaving the writer empty-handed.
-const FACT_OVERSAMPLE_RATIO = 2.5;
-const MAX_FACT_TARGET = 35;
+// Keep the fact pool tight. Over-collecting makes the validator read/search
+// too much and was causing production generations to hit the 180s ceiling.
+const FACT_OVERSAMPLE_RATIO = 1.7;
+const MAX_FACT_TARGET = 24;
+const RESEARCH_SEARCH_TIMEOUT_MS = 35_000;
+const RESEARCH_FALLBACK_TIMEOUT_MS = 25_000;
 
 export function computeFactTarget(questionCount: number): number {
   return Math.min(MAX_FACT_TARGET, Math.ceil(questionCount * FACT_OVERSAMPLE_RATIO));
@@ -39,24 +41,32 @@ export async function researchFacts(
 
   let response: Anthropic.Message;
   try {
-    response = await client.messages.create({
-      model: PIPELINE_MODEL,
-      max_tokens: 12000,
-      system: [
-        {
-          type: "text",
-          text: RESEARCHER_SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      tools: [researcherSearchTool(req.difficulty)],
-      messages: [{ role: "user", content: userPayload }],
-    });
+    response = await createResearchMessage(
+      client,
+      userPayload,
+      req.difficulty,
+      computeResearchTokenLimit(factTarget),
+      true
+    );
   } catch (err) {
-    if (err instanceof Anthropic.APIError) {
-      throw new Error(`Researcher API error ${err.status}: ${err.message}`);
+    console.warn(
+      "[researcher] web-search request failed or timed out; retrying without search:",
+      summarizeAnthropicError(err)
+    );
+    try {
+      response = await createResearchMessage(
+        client,
+        userPayload,
+        req.difficulty,
+        computeResearchTokenLimit(factTarget),
+        false
+      );
+    } catch (fallbackErr) {
+      if (fallbackErr instanceof Anthropic.APIError) {
+        throw new Error(`Researcher API error ${fallbackErr.status}: ${fallbackErr.message}`);
+      }
+      throw fallbackErr;
     }
-    throw err;
   }
 
   // Web search interleaves tool_use / tool_result / text blocks — the JSON
@@ -72,6 +82,45 @@ export async function researchFacts(
   const parsed = parseStrictJson(textBlock.text);
   const latency_ms = Math.round(performance.now() - start);
   return normalizeResearch(parsed, req, latency_ms);
+}
+
+async function createResearchMessage(
+  client: Anthropic,
+  userPayload: string,
+  difficulty: number,
+  maxTokens: number,
+  withSearch: boolean
+): Promise<Anthropic.Message> {
+  return client.messages.create(
+    {
+      model: PIPELINE_MODEL,
+      max_tokens: maxTokens,
+      system: [
+        {
+          type: "text",
+          text: RESEARCHER_SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      ...(withSearch ? { tools: [researcherSearchTool(difficulty)] } : {}),
+      messages: [{ role: "user", content: userPayload }],
+    },
+    {
+      maxRetries: 0,
+      timeout: withSearch ? RESEARCH_SEARCH_TIMEOUT_MS : RESEARCH_FALLBACK_TIMEOUT_MS,
+    }
+  );
+}
+
+function computeResearchTokenLimit(factTarget: number): number {
+  return Math.min(7_000, Math.max(3_000, 1_200 + factTarget * 240));
+}
+
+function summarizeAnthropicError(err: unknown): string {
+  if (err instanceof Anthropic.APIError) {
+    return `${err.status}: ${err.message}`;
+  }
+  return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
 }
 
 function normalizeResearch(
