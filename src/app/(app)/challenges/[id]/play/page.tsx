@@ -60,6 +60,23 @@ async function stampPlayStartedAt(challengeId: string, userId: string): Promise<
   return new Date(rows[0].play_started_at);
 }
 
+/**
+ * Record that the user has seen this question. Used by the bank-draw filter
+ * so a user who bails on a match before submitting an answer is still never
+ * re-served the same question in a future match.
+ *
+ * Idempotent via the (user_id, question_id) primary key — refreshing the
+ * play page on the same question is a no-op.
+ */
+async function logQuestionView(questionId: string, userId: string): Promise<void> {
+  await query(
+    `INSERT INTO question_views (user_id, question_id)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id, question_id) DO NOTHING`,
+    [userId, questionId]
+  );
+}
+
 export default async function PlayPage({
   params,
 }: {
@@ -89,6 +106,10 @@ export default async function PlayPage({
   if (next.closed_at !== null || next.status === "completed" || next.status === "cancelled") {
     redirect(`/challenges/${id}`);
   }
+
+  // Record that the user has now seen this question. Bank-draw filter uses
+  // this to never re-serve a question even if they bail before submitting.
+  await logQuestionView(next.question_id, user.id);
 
   // Stamp play_started_at on first question render so the whole-quiz timer
   // anchors when the user actually opens their first question, not at match creation.

@@ -52,6 +52,16 @@ export async function drawFromBank(
            WHERE a.user_id = $5
              AND q.bank_question_id = question_bank.id
         )
+        -- Also skip questions they've VIEWED but not answered (bailed before
+        -- submitting). The play page upserts question_views on every render,
+        -- so this catches the abandoned-match edge case.
+        AND NOT EXISTS (
+          SELECT 1
+            FROM question_views v
+            JOIN questions q ON q.id = v.question_id
+           WHERE v.user_id = $5
+             AND q.bank_question_id = question_bank.id
+        )
       ORDER BY quality_score DESC NULLS LAST, times_used DESC, created_at DESC
       LIMIT $4`,
     [topicNormalized, difficulty, format, count, userId]
