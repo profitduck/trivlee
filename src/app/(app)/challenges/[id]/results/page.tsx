@@ -9,6 +9,7 @@ import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { cn } from "@/lib/utils";
 import { QuestionFeedback } from "./question-feedback";
+import { WinConfetti } from "./win-confetti";
 
 interface MatchView {
   challenge_id: string;
@@ -116,6 +117,36 @@ async function getLeaderboard(
   return rows;
 }
 
+interface PeerAttempt {
+  question_id: string;
+  user_id: string;
+  username: string;
+  display_name: string | null;
+  user_answer: string | null;
+  is_correct: boolean | null;
+  score: number;
+}
+
+/**
+ * Fetch every participant's attempt for every question in the match, so the
+ * results page can show "Alice picked Cricket, Bob picked Doolan" under each
+ * question. Includes the current user too — caller decides whether to render
+ * the self row separately.
+ */
+async function getAllAttempts(challengeId: string): Promise<PeerAttempt[]> {
+  const { rows } = await query<PeerAttempt & { score: string }>(
+    `SELECT
+       a.question_id, a.user_id, u.username, u.display_name,
+       a.user_answer, a.is_correct, a.score
+     FROM attempts a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.challenge_id = $1
+     ORDER BY a.question_id, a.created_at ASC`,
+    [challengeId]
+  );
+  return rows.map((r) => ({ ...r, score: Number(r.score) }));
+}
+
 async function getMyBreakdown(
   challengeId: string,
   userId: string
@@ -150,10 +181,19 @@ export default async function ResultsPage({
   if (!match) notFound();
 
   const useTimeTiebreak = match.timer_mode === "stopwatch";
-  const [board, breakdown] = await Promise.all([
+  const [board, breakdown, peerAttempts] = await Promise.all([
     getLeaderboard(id, useTimeTiebreak),
     getMyBreakdown(id, user.id),
+    getAllAttempts(id),
   ]);
+
+  // Group peer attempts by question for fast per-question lookup in render.
+  const attemptsByQuestion = new Map<string, PeerAttempt[]>();
+  for (const a of peerAttempts) {
+    const list = attemptsByQuestion.get(a.question_id) ?? [];
+    list.push(a);
+    attemptsByQuestion.set(a.question_id, list);
+  }
 
   const ranked = rankLeaderboard(board, useTimeTiebreak);
   const topRow = ranked[0];
@@ -167,6 +207,7 @@ export default async function ResultsPage({
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
+      {(youWinSolo || youAreInTopTie) && <WinConfetti />}
       <Button variant="ghost" size="sm" asChild className="-ml-3 gap-1.5">
         <Link href="/dashboard">
           <ArrowLeft className="size-4" />
@@ -228,34 +269,44 @@ export default async function ResultsPage({
       </section>
 
       <section>
-        <h2 className="font-display text-2xl font-bold mb-4">Your answers</h2>
+        <h2 className="font-display text-2xl font-bold mb-4">
+          {board.length > 1 ? "Question breakdown" : "Your answers"}
+        </h2>
         <div className="space-y-3">
-          {breakdown.map((q) => (
-            <Card key={q.question_id}>
-              <CardContent className="p-5 space-y-3">
-                <p className="font-medium leading-snug">
-                  <span className="text-muted-foreground mr-2">Q{q.position}.</span>
-                  {q.question_text}
-                </p>
-                <p className="text-sm">
-                  <span className="text-muted-foreground">Answer:</span>{" "}
-                  <span className="font-semibold">{q.correct_answer}</span>
-                </p>
-                <YourAttempt answer={q.my_answer} correct={q.my_correct} score={Number(q.my_score)} />
-                {q.source_hint && (
-                  <p className="text-xs text-muted-foreground border-t pt-2">
-                    <span className="font-medium">Source:</span> {q.source_hint}
+          {breakdown.map((q) => {
+            const peers = (attemptsByQuestion.get(q.question_id) ?? []).filter(
+              (a) => a.user_id !== user.id
+            );
+            return (
+              <Card key={q.question_id}>
+                <CardContent className="p-5 space-y-3">
+                  <p className="font-medium leading-snug">
+                    <span className="text-muted-foreground mr-2">Q{q.position}.</span>
+                    {q.question_text}
                   </p>
-                )}
-                <QuestionFeedback
-                  questionId={q.question_id}
-                  challengeId={id}
-                  existingQuality={q.my_quality_rating}
-                  existingReportStatus={q.my_report_status}
-                />
-              </CardContent>
-            </Card>
-          ))}
+                  <p className="text-sm">
+                    <span className="text-muted-foreground">Answer:</span>{" "}
+                    <span className="font-semibold">{q.correct_answer}</span>
+                  </p>
+                  <YourAttempt answer={q.my_answer} correct={q.my_correct} score={Number(q.my_score)} />
+                  {peers.length > 0 && (
+                    <PeerAnswers attempts={peers} correctAnswer={q.correct_answer} />
+                  )}
+                  {q.source_hint && (
+                    <p className="text-xs text-muted-foreground border-t pt-2">
+                      <span className="font-medium">Source:</span> {q.source_hint}
+                    </p>
+                  )}
+                  <QuestionFeedback
+                    questionId={q.question_id}
+                    challengeId={id}
+                    existingQuality={q.my_quality_rating}
+                    existingReportStatus={q.my_report_status}
+                  />
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       </section>
 
@@ -405,6 +456,78 @@ function YourAttempt({
       <p className="font-medium leading-snug">
         {answer ?? <em className="text-muted-foreground">— (not answered)</em>}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Compact "who picked what" panel under each question, showing every other
+ * participant's answer. For MC the answer is the picked option; for free-text
+ * it's whatever they typed. Skipped/timed-out attempts show as "— (no answer)".
+ *
+ * Each row is colored by correctness so you can scan and see at a glance who
+ * got it right and who didn't.
+ */
+function PeerAnswers({
+  attempts,
+  correctAnswer,
+}: {
+  attempts: PeerAttempt[];
+  correctAnswer: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+      <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+        Others answered
+      </p>
+      <ul className="space-y-1.5">
+        {attempts.map((a) => {
+          const initials = (a.display_name ?? a.username).slice(0, 2).toUpperCase();
+          const correct = a.is_correct === true;
+          const partial = !correct && a.score > 0;
+          const noAnswer = a.user_answer === null;
+          const matchesCorrect =
+            !noAnswer &&
+            a.user_answer?.toLowerCase().trim() === correctAnswer.toLowerCase().trim();
+          return (
+            <li key={a.user_id} className="flex items-center gap-2.5 text-sm">
+              <Avatar className="size-7 shrink-0">
+                <AvatarFallback className="text-[10px] bg-muted text-muted-foreground font-medium">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+              <span className="font-medium text-sm">
+                {a.display_name ?? a.username}
+              </span>
+              <span className="text-muted-foreground text-xs">·</span>
+              <span
+                className={cn(
+                  "flex-1 min-w-0 truncate text-sm",
+                  noAnswer && "italic text-muted-foreground",
+                  correct && "text-chart-5 font-medium",
+                  partial && "text-accent-foreground"
+                )}
+                title={a.user_answer ?? "no answer"}
+              >
+                {noAnswer ? "— (no answer)" : a.user_answer}
+              </span>
+              {(correct || matchesCorrect) && (
+                <span
+                  className="inline-flex items-center justify-center size-5 rounded-full bg-chart-5/20 shrink-0"
+                  title="Correct"
+                >
+                  <Crown className="size-3 text-chart-5" />
+                </span>
+              )}
+              {!correct && !noAnswer && (
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {partial ? `+${a.score.toFixed(1)}` : "0"}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
