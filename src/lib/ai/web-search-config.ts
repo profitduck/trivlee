@@ -13,6 +13,10 @@ export const WEB_SEARCH_ALLOWED_DOMAINS = [
   // Encyclopedias — accessible
   "wikipedia.org",
   "britannica.com",
+  // Verbatim quotes — Wikimedia sister project to Wikipedia. Crucial for any
+  // topic that asks about specific movie/TV/book lines ("Borat quotes",
+  // "Office one-liners", etc.) since IMDB/Fandom quote pages are sparse.
+  "wikiquote.org",
   // Entertainment / fictional canon — accessible
   "fandom.com",
   "imdb.com",

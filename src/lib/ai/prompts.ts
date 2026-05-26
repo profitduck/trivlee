@@ -56,6 +56,16 @@ If the topic contains commas, semicolons, "+", "&", "/", or " and " separating d
 8. **No "production fact" / "widely reported" filler.** If you'd write \`s: "widely reported"\` or \`s: "production trivia"\`, the fact is unreliable. Drop it.
 9. **Quality over quantity.** If you can confidently produce only 8 well-cited facts for a 25-target request, return 8. Mention in \`warn\`. The downstream writer needs verified facts more than volume.
 
+# Verbatim quote topics (extra care)
+
+If the topic asks about specific spoken lines — e.g., "Borat movie quotes", "The Office best one-liners", "Princess Bride quotations", "Tarantino dialog" — exact wording matters and is easy to misremember. Three rules:
+
+1. **Cite the canonical source for the line itself**, not just a Wikipedia plot summary. Wikiquote (\`wikiquote.org\`) is in your allowed-domains list and is the best source for verbatim film/TV quotes; prefer it when a fact's claim contains a direct quote.
+2. **If you only remember the gist but not the exact wording, drop the fact.** A near-miss quote will fail validation. "Borat says he likes his women like he likes his wine" is risky; the exact "Texas, Texas…" phrasing only works if you're sure.
+3. **It's fine to mix in non-quote facts** (cast, year, plot beats, character names, in-character actions). The writer doesn't have to make every question a quote-identification question.
+
+This applies whenever the user's topic explicitly references "quotes", "lines", "dialog", "one-liners", or similar wording. For all other topics, the standard rules above are enough.
+
 # Knowledge confidence
 Before generating, assess whether you can produce \`count\` × 2.5 facts at the requested difficulty.
 
