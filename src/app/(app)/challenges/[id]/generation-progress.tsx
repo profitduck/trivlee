@@ -15,6 +15,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { DeleteMatchButton } from "./delete-match-button";
 
 // Phases visible in the UI. The server may also emit "writing" briefly but
 // in the speculative-writer pipeline that work runs in parallel with
@@ -126,7 +127,12 @@ export function GenerationProgress({
   }, [challengeId, router]);
 
   if (state.phase === "failed") {
-    return <FailedCard error={state.error ?? "Something went wrong."} />;
+    return (
+      <FailedCard
+        challengeId={challengeId}
+        error={state.error ?? "Something went wrong."}
+      />
+    );
   }
 
   // Normalize "writing" → "validating" for the UI. The speculative-writer
@@ -254,7 +260,7 @@ function formatElapsed(ms: number): string {
   return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
-function FailedCard({ error }: { error: string }) {
+function FailedCard({ challengeId, error }: { challengeId: string; error: string }) {
   return (
     <Card className="border-2 border-destructive/40">
       <CardContent className="p-8 sm:p-10 space-y-5">
@@ -267,9 +273,12 @@ function FailedCard({ error }: { error: string }) {
             <p className="text-sm text-muted-foreground">{error}</p>
           </div>
         </div>
-        <Button asChild variant="outline">
-          <Link href="/challenges/new">Try again</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="default">
+            <Link href="/challenges/new">Try again</Link>
+          </Button>
+          <DeleteMatchButton challengeId={challengeId} variant="outline" />
+        </div>
       </CardContent>
     </Card>
   );

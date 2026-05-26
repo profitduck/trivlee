@@ -26,6 +26,7 @@ import {
 } from "@/lib/matches";
 import { closeMatchAction } from "./actions";
 import { CopyInviteLink } from "./copy-invite-link";
+import { DeleteMatchButton } from "./delete-match-button";
 import { GenerationProgress } from "./generation-progress";
 
 interface ChallengeDetail {
@@ -233,6 +234,11 @@ export default async function ChallengePage({
               Close match
             </Button>
           </form>
+        )}
+        {youAreChallenger && (
+          // Hosts can always nuke a match they created — even after it's
+          // closed or completed. Cascades clean up participants/attempts/results.
+          <DeleteMatchButton challengeId={id} variant="ghost" />
         )}
       </div>
     </div>
