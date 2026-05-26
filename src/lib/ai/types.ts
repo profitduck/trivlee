@@ -33,6 +33,7 @@ export interface GenerationResponse {
     research_ms?: number;
     validate_ms?: number;
     write_ms?: number;
+    repair_write_ms?: number;
     facts_researched?: number;
     facts_validated?: number;
   };

@@ -16,6 +16,7 @@ import {
   addToBank,
   drawFromBank,
   markBankUse,
+  type BankDraw,
 } from "@/lib/ai/question-bank";
 import type {
   ChallengeFormat,
@@ -71,6 +72,51 @@ function generateInviteToken(): string {
   return randomBytes(16).toString("base64url");
 }
 
+function takeBalancedMixedBankDraw(
+  multipleChoice: BankDraw,
+  freeText: BankDraw,
+  count: number
+): BankDraw {
+  const questions: GeneratedQuestion[] = [];
+  const bankIds: string[] = [];
+  const append = (draw: BankDraw, index: number) => {
+    questions.push(draw.questions[index]);
+    bankIds.push(draw.bankIds[index]);
+  };
+
+  let mcIndex = 0;
+  let ftIndex = 0;
+  const primaryMcCount = Math.min(Math.ceil(count / 2), multipleChoice.questions.length);
+  const primaryFtCount = Math.min(Math.floor(count / 2), freeText.questions.length);
+
+  while (questions.length < count && (mcIndex < primaryMcCount || ftIndex < primaryFtCount)) {
+    if (mcIndex < primaryMcCount && questions.length < count) {
+      append(multipleChoice, mcIndex);
+      mcIndex++;
+    }
+    if (ftIndex < primaryFtCount && questions.length < count) {
+      append(freeText, ftIndex);
+      ftIndex++;
+    }
+  }
+
+  while (
+    questions.length < count &&
+    (mcIndex < multipleChoice.questions.length || ftIndex < freeText.questions.length)
+  ) {
+    if (mcIndex < multipleChoice.questions.length && questions.length < count) {
+      append(multipleChoice, mcIndex);
+      mcIndex++;
+    }
+    if (ftIndex < freeText.questions.length && questions.length < count) {
+      append(freeText, ftIndex);
+      ftIndex++;
+    }
+  }
+
+  return { questions, bankIds };
+}
+
 export async function createChallenge(input: CreateChallengeInput) {
   const user = await requireUser();
 
@@ -86,11 +132,32 @@ export async function createChallenge(input: CreateChallengeInput) {
     : null;
 
   // ─── Phase A: try to fill from the question bank ─────────────────────────
-  // Mixed format bypasses bank for now — single-format only, since the bank
-  // keys on per_question_format.
+  // Mixed draws from both per-question formats. Fetching up to the full count
+  // for each side is still far cheaper than an AI call and lets the bank avoid
+  // generation even if one format has sparse coverage.
   let bankQuestions: GeneratedQuestion[] = [];
   let bankIds: string[] = [];
-  if (input.format !== "mixed") {
+  if (input.format === "mixed") {
+    const [multipleChoice, freeText] = await Promise.all([
+      drawFromBank(
+        topicNormalized,
+        input.difficulty,
+        "multiple_choice",
+        input.numQuestions,
+        user.id
+      ),
+      drawFromBank(
+        topicNormalized,
+        input.difficulty,
+        "free_text",
+        input.numQuestions,
+        user.id
+      ),
+    ]);
+    const drawn = takeBalancedMixedBankDraw(multipleChoice, freeText, input.numQuestions);
+    bankQuestions = drawn.questions;
+    bankIds = drawn.bankIds;
+  } else {
     const pqf = input.format as PerQuestionFormat;
     const drawn = await drawFromBank(
       topicNormalized,
@@ -295,6 +362,7 @@ async function runPipelineForChallenge(args: RunPipelineArgs): Promise<void> {
       write_ms: result.meta.write_ms,
       facts_researched: result.meta.facts_researched,
       facts_validated: result.meta.facts_validated,
+      repair_write_ms: result.meta.repair_write_ms,
     };
     generatedBy =
       bankQuestions.length > 0

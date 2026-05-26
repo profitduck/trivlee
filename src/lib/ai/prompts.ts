@@ -166,7 +166,7 @@ You receive JSON:
   "interp": "string (topic interpretation from research stage)",
   "diff": 1-10,
   "format": "multiple_choice" | "free_text" | "mixed",
-  "count": integer (number of questions to produce — produce ~30% extra so a parallel verifier can drop some without leaving us short),
+  "count": integer (target number of questions to produce; the caller may already include oversampling),
   "facts": [{"c": "...", "s": "...", "d": N, "t": "..."}, ...]
 }
 

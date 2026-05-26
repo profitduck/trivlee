@@ -2,7 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, parseStrictJson } from "./client";
 import { WRITER_SYSTEM_PROMPT } from "./prompts";
-import { checkQuestion } from "./filters";
+import { checkQuestion, checkQuestionAgainstFact } from "./filters";
 import type {
   FactCandidate,
   GeneratedQuestion,
@@ -258,11 +258,20 @@ function normalizeQuestion(
   };
 
   // Deterministic post-write filters — drop questions that leak the answer,
-  // emit trick-answer copy, or break MC parallelism.
+  // emit trick-answer copy, break MC parallelism, or are not anchored to the
+  // fact they claim to use.
   const check = checkQuestion(candidate);
   if (!check.ok) {
     console.warn(`[writer] dropping: ${check.reason} — "${candidate.question.slice(0, 80)}"`);
     return null;
+  }
+  const sourceFact = input.facts[fact_index];
+  if (sourceFact) {
+    const grounding = checkQuestionAgainstFact(candidate, sourceFact);
+    if (!grounding.ok) {
+      console.warn(`[writer] dropping: ${grounding.reason} — "${candidate.question.slice(0, 80)}"`);
+      return null;
+    }
   }
 
   return candidate;
