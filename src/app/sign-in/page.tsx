@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { Swords, UserCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { redirect } from "next/navigation";
 import { query } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { safeNextPath } from "@/lib/safe-redirect";
-import { signInAction, quickSwitchAction } from "./actions";
+import { quickSwitchAction } from "./actions";
+import { SignInForm } from "./sign-in-form";
 
 async function getSeededUsers() {
   const { rows } = await query<{ id: string; username: string; display_name: string | null }>(
@@ -57,23 +56,7 @@ export default async function SignInPage({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            <form action={signInAction} className="space-y-4">
-              <input type="hidden" name="next" value={next} />
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
-                <Input
-                  id="username"
-                  name="username"
-                  placeholder="alice"
-                  autoComplete="username"
-                  autoFocus
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full" size="lg">
-                Sign in
-              </Button>
-            </form>
+            <SignInForm next={next} />
 
             <p className="text-sm text-center text-muted-foreground">
               No account yet?{" "}

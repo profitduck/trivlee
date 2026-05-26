@@ -5,7 +5,14 @@ import { query } from "@/lib/db";
 import { setSession } from "@/lib/auth";
 import { safeNextPath } from "@/lib/safe-redirect";
 
-export async function signInAction(formData: FormData) {
+export interface SignInFormState {
+  error?: string;
+}
+
+export async function signInAction(
+  _prev: SignInFormState | null,
+  formData: FormData
+): Promise<SignInFormState> {
   const username = String(formData.get("username") ?? "").trim().toLowerCase();
   const next = safeNextPath(String(formData.get("next") ?? ""));
   if (!username) {
@@ -25,7 +32,10 @@ export async function signInAction(formData: FormData) {
   redirect(next);
 }
 
-export async function quickSwitchAction(userId: string, next?: string) {
+export async function quickSwitchAction(
+  userId: string,
+  next?: string
+): Promise<void> {
   await setSession(userId);
   redirect(safeNextPath(next));
 }

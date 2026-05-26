@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
 
-export async function hideReportedQuestion(reportId: string) {
+// Returns void so these can be used directly as <form action={fn.bind(...)}>.
+// Errors throw; revalidatePath refreshes the UI on success.
+
+export async function hideReportedQuestion(reportId: string): Promise<void> {
   await requireAdmin();
   const { rows } = await query<{ question_id: string; bank_question_id: string | null }>(
     `SELECT qr.question_id, q.bank_question_id
@@ -13,10 +16,9 @@ export async function hideReportedQuestion(reportId: string) {
       WHERE qr.id = $1`,
     [reportId]
   );
-  if (rows.length === 0) return { error: "Report not found." };
+  if (rows.length === 0) return;
   const { bank_question_id } = rows[0];
 
-  // Hide the bank entry (if there is one) so it won't be drawn into future matches.
   if (bank_question_id) {
     await query(
       `UPDATE question_bank SET hidden = true WHERE id = $1`,
@@ -24,7 +26,6 @@ export async function hideReportedQuestion(reportId: string) {
     );
   }
 
-  // Mark all reports for this question as reviewed_removed.
   await query(
     `UPDATE question_reports
         SET status = 'reviewed_removed'
@@ -33,15 +34,13 @@ export async function hideReportedQuestion(reportId: string) {
   );
 
   revalidatePath("/admin/reports");
-  return { ok: true };
 }
 
-export async function dismissReport(reportId: string) {
+export async function dismissReport(reportId: string): Promise<void> {
   await requireAdmin();
   await query(
     `UPDATE question_reports SET status = 'reviewed_kept' WHERE id = $1`,
     [reportId]
   );
   revalidatePath("/admin/reports");
-  return { ok: true };
 }

@@ -5,14 +5,24 @@ import { query } from "@/lib/db";
 import { setSession } from "@/lib/auth";
 import { safeNextPath } from "@/lib/safe-redirect";
 
-export async function signUpAction(formData: FormData) {
+export interface SignUpFormState {
+  error?: string;
+}
+
+export async function signUpAction(
+  _prev: SignUpFormState | null,
+  formData: FormData
+): Promise<SignUpFormState> {
   const username = String(formData.get("username") ?? "").trim().toLowerCase();
   const displayName = String(formData.get("display_name") ?? "").trim() || null;
   const email = String(formData.get("email") ?? "").trim() || null;
   const next = safeNextPath(String(formData.get("next") ?? ""));
 
   if (!/^[a-z0-9_]{3,20}$/.test(username)) {
-    return { error: "Username must be 3-20 characters: lowercase letters, digits, or underscores." };
+    return {
+      error:
+        "Username must be 3-20 characters: lowercase letters, digits, or underscores.",
+    };
   }
 
   try {
