@@ -475,6 +475,15 @@ async function persistQuestionSet(a: PersistArgs): Promise<void> {
     }
   }
 
+  // `challenges.num_questions` is used by progress and completion logic, so
+  // keep it aligned to the questions actually persisted for this match.
+  if (combined.length > 0 && combined.length !== a.requestedCount) {
+    await query(
+      `UPDATE challenges SET num_questions = $2 WHERE id = $1`,
+      [a.challengeId, combined.length]
+    );
+  }
+
   for (let i = 0; i < combined.length; i++) {
     const { q, bankId } = combined[i];
     await query(

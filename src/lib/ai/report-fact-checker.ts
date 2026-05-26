@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { query } from "@/lib/db";
+import { finalizeAllParticipants } from "@/lib/matches";
 import { getAnthropicClient, parseStrictJson, PIPELINE_MODEL } from "./client";
 import { validatorSearchTool } from "./web-search-config";
 
@@ -46,6 +47,8 @@ type FactCheckVerdict =
 interface ReportFactCheckRow {
   id: string;
   question_id: string;
+  challenge_id: string;
+  challenge_status: string;
   bank_question_id: string | null;
   reason: string;
   question_text: string;
@@ -108,6 +111,9 @@ export async function factCheckReportedQuestion(reportId: string): Promise<void>
         `UPDATE question_bank SET hidden = true WHERE id = $1`,
         [report.bank_question_id]
       );
+      if (report.challenge_status === "completed") {
+        await finalizeAllParticipants(report.challenge_id);
+      }
     }
   } catch (err) {
     console.error("[report-fact-checker] failed:", err);
@@ -128,6 +134,8 @@ async function getReport(reportId: string): Promise<ReportFactCheckRow | null> {
     `SELECT
        qr.id,
        qr.question_id,
+       qs.challenge_id,
+       c.status::text AS challenge_status,
        qr.reason,
        q.bank_question_id,
        q.question_text,

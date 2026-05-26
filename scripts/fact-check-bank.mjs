@@ -155,14 +155,22 @@ try {
     }
   }
 
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, candidates.length) }, (_, i) => worker(i + 1))
-  );
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, candidates.length) }, (_, i) => worker(i + 1))
+    );
+  } catch (err) {
+    const recomputed = await recomputeCompletedResults();
+    console.log(`Recomputed ${recomputed} completed result row(s) before stopping.`);
+    throw err;
+  }
+
+  const recomputed = await recomputeCompletedResults();
 
   console.log(
     `Done. supported=${stats.supported}, wrong_answer=${stats.wrong_answer}, ` +
       `bad_question=${stats.bad_question}, uncertain=${stats.uncertain}, ` +
-      `error=${stats.error}, newly_hidden=${stats.hidden}`
+      `error=${stats.error}, newly_hidden=${stats.hidden}, recomputed_results=${recomputed}`
   );
 } finally {
   await db.end();
@@ -319,6 +327,35 @@ async function saveResult(bankQuestionId, result, autoHide) {
   );
 }
 
+async function recomputeCompletedResults() {
+  const validAttempt = `a.id IS NOT NULL AND q.id IS NOT NULL AND ${validQuestionPredicate("q", "qb")}`;
+  const { rowCount } = await db.query(
+    `INSERT INTO results (challenge_id, user_id, total_score, correct_count, total_time_ms, completed_at)
+     SELECT cp.challenge_id, cp.user_id,
+            COALESCE(SUM(CASE WHEN ${validAttempt} THEN a.score ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ${validAttempt} AND a.is_correct THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ${validAttempt} THEN a.time_taken_ms ELSE 0 END), 0),
+            now()
+       FROM challenge_participants cp
+       JOIN challenges c
+         ON c.id = cp.challenge_id
+        AND c.status = 'completed'
+       LEFT JOIN attempts a
+         ON a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id
+       LEFT JOIN questions q
+         ON q.id = a.question_id
+       LEFT JOIN question_bank qb
+         ON qb.id = q.bank_question_id
+      GROUP BY cp.challenge_id, cp.user_id
+        ON CONFLICT (challenge_id, user_id) DO UPDATE
+        SET total_score = EXCLUDED.total_score,
+            correct_count = EXCLUDED.correct_count,
+            total_time_ms = EXCLUDED.total_time_ms,
+            completed_at = EXCLUDED.completed_at`
+  );
+  return rowCount ?? 0;
+}
+
 function parseArgs(rawArgs) {
   const out = new Map();
   for (let i = 0; i < rawArgs.length; i++) {
@@ -406,4 +443,28 @@ function isLowCreditError(err) {
     return /credit balance is too low/i.test(err.message);
   }
   return false;
+}
+
+function validQuestionPredicate(questionAlias, bankAlias) {
+  return `(
+    (
+      ${bankAlias}.id IS NULL
+      OR NOT (
+        ${bankAlias}.fact_check_verdict IN ('wrong_answer', 'bad_question')
+        AND COALESCE(${bankAlias}.fact_check_confidence, 0) >= 0.85
+      )
+    )
+    AND NOT EXISTS (
+      SELECT 1
+        FROM question_reports qvalid_reports
+       WHERE qvalid_reports.question_id = ${questionAlias}.id
+         AND (
+           qvalid_reports.status = 'reviewed_removed'
+           OR (
+             qvalid_reports.ai_fact_check_verdict IN ('wrong_answer', 'bad_question')
+             AND COALESCE(qvalid_reports.ai_fact_check_confidence, 0) >= 0.85
+           )
+         )
+    )
+  )`;
 }

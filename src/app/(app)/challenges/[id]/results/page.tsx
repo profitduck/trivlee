@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { validQuestionPredicate } from "@/lib/question-validity";
 import { cn } from "@/lib/utils";
 import { QuestionFeedback } from "./question-feedback";
 import { WinConfetti } from "./win-confetti";
@@ -79,9 +80,18 @@ interface QuestionDetail {
 }
 
 async function getMatch(id: string, userId: string): Promise<MatchView | null> {
+  const validQuestion = validQuestionPredicate("q", "qb");
   const { rows } = await query<MatchView>(
-    `SELECT c.id AS challenge_id, c.topic, c.num_questions, c.challenger_id,
-            c.timer_mode::text AS timer_mode
+    `SELECT c.id AS challenge_id, c.topic,
+            COALESCE((
+              SELECT COUNT(*)::int
+                FROM question_sets qs
+                JOIN questions q ON q.set_id = qs.id
+                LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+               WHERE qs.challenge_id = c.id
+                 AND ${validQuestion}
+            ), c.num_questions) AS num_questions,
+            c.challenger_id, c.timer_mode::text AS timer_mode
        FROM challenges c
        JOIN challenge_participants cp ON cp.challenge_id = c.id AND cp.user_id = $2
       WHERE c.id = $1 AND c.status = 'completed'`,
@@ -94,23 +104,27 @@ async function getLeaderboard(
   challengeId: string,
   useTimeTiebreak: boolean
 ): Promise<LeaderboardRow[]> {
+  const validAttempt = `a.id IS NOT NULL AND q.id IS NOT NULL AND ${validQuestionPredicate("q", "qb")}`;
   // In stopwatch mode, ties on (total_score, correct_count) are broken by
   // total_time_ms ASC (fastest wins). In all other modes, joined_at is just a
   // stable secondary sort — it does NOT determine winner.
   const tiebreakSql = useTimeTiebreak
-    ? `r.total_time_ms ASC NULLS LAST, cp.joined_at ASC`
+    ? `total_time_ms ASC NULLS LAST, cp.joined_at ASC`
     : `cp.joined_at ASC`;
   const { rows } = await query<LeaderboardRow>(
     `SELECT
        cp.user_id, u.username, u.display_name, cp.is_challenger,
-       COALESCE(r.total_score, 0) AS total_score,
-       COALESCE(r.correct_count, 0) AS correct_count,
-       r.total_time_ms,
-       (SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id) AS answered_count
+       COALESCE(SUM(CASE WHEN ${validAttempt} THEN a.score ELSE 0 END), 0) AS total_score,
+       COALESCE(SUM(CASE WHEN ${validAttempt} AND a.is_correct THEN 1 ELSE 0 END), 0) AS correct_count,
+       COALESCE(SUM(CASE WHEN ${validAttempt} THEN a.time_taken_ms ELSE 0 END), 0) AS total_time_ms,
+       COALESCE(SUM(CASE WHEN ${validAttempt} THEN 1 ELSE 0 END), 0) AS answered_count
      FROM challenge_participants cp
      JOIN users u ON u.id = cp.user_id
-     LEFT JOIN results r ON r.challenge_id = cp.challenge_id AND r.user_id = cp.user_id
+     LEFT JOIN attempts a ON a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id
+     LEFT JOIN questions q ON q.id = a.question_id
+     LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
      WHERE cp.challenge_id = $1
+     GROUP BY cp.user_id, u.username, u.display_name, cp.is_challenger, cp.joined_at
      ORDER BY total_score DESC, correct_count DESC, ${tiebreakSql}`,
     [challengeId]
   );
@@ -134,13 +148,17 @@ interface PeerAttempt {
  * the self row separately.
  */
 async function getAllAttempts(challengeId: string): Promise<PeerAttempt[]> {
+  const validQuestion = validQuestionPredicate("q", "qb");
   const { rows } = await query<PeerAttempt & { score: string }>(
     `SELECT
        a.question_id, a.user_id, u.username, u.display_name,
        a.user_answer, a.is_correct, a.score
      FROM attempts a
      JOIN users u ON u.id = a.user_id
+     JOIN questions q ON q.id = a.question_id
+     LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
      WHERE a.challenge_id = $1
+       AND ${validQuestion}
      ORDER BY a.question_id, a.created_at ASC`,
     [challengeId]
   );
@@ -151,19 +169,24 @@ async function getMyBreakdown(
   challengeId: string,
   userId: string
 ): Promise<QuestionDetail[]> {
+  const validQuestion = validQuestionPredicate("q", "qb");
   const { rows } = await query<QuestionDetail>(
     `SELECT
-       q.id AS question_id, q.position, q.question_text,
+       q.id AS question_id,
+       ROW_NUMBER() OVER (ORDER BY q.position)::int AS position,
+       q.question_text,
        q.correct_answer, q.source_hint,
        am.user_answer AS my_answer, am.is_correct AS my_correct, COALESCE(am.score, 0) AS my_score,
        qr.quality_rating AS my_quality_rating,
        qrep.status::text AS my_report_status
      FROM question_sets qs
      JOIN questions q ON q.set_id = qs.id
+     LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
      LEFT JOIN attempts am ON am.question_id = q.id AND am.user_id = $2
      LEFT JOIN question_ratings qr ON qr.question_id = q.id AND qr.user_id = $2
      LEFT JOIN question_reports qrep ON qrep.question_id = q.id AND qrep.reporter_id = $2
      WHERE qs.challenge_id = $1
+       AND ${validQuestion}
      ORDER BY q.position`,
     [challengeId, userId]
   );

@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { isParticipant, lazyCloseIfDue } from "@/lib/matches";
+import { validQuestionPredicate } from "@/lib/question-validity";
 import { PlayCard } from "./play-card";
 
 interface NextQuestion {
@@ -28,25 +29,34 @@ async function getNextQuestion(
   challengeId: string,
   userId: string
 ): Promise<NextQuestion | null> {
+  const validQuestion = validQuestionPredicate("q", "qb");
   const { rows } = await query<NextQuestion>(
-    `SELECT
-       c.id AS challenge_id, c.topic, c.num_questions,
-       c.time_per_question_s, c.total_time_s, c.timer_mode::text AS timer_mode,
-       c.status::text AS status, c.closed_at,
-       cp.play_started_at,
-       q.position, q.id AS question_id, q.question_text, q.correct_answer,
-       q.distractors, q.per_question_format::text AS per_question_format
-     FROM challenges c
-     JOIN challenge_participants cp ON cp.challenge_id = c.id AND cp.user_id = $2
-     JOIN question_sets qs ON qs.challenge_id = c.id
-     JOIN questions q ON q.set_id = qs.id
-     WHERE c.id = $1
-       AND NOT EXISTS (
-         SELECT 1 FROM attempts a
-         WHERE a.question_id = q.id AND a.user_id = $2
-       )
-     ORDER BY q.position
-     LIMIT 1`,
+    `WITH valid_questions AS (
+       SELECT
+         c.id AS challenge_id, c.topic,
+         COUNT(*) OVER()::int AS num_questions,
+         c.time_per_question_s, c.total_time_s, c.timer_mode::text AS timer_mode,
+         c.status::text AS status, c.closed_at,
+         cp.play_started_at,
+         ROW_NUMBER() OVER (ORDER BY q.position)::int AS position,
+         q.id AS question_id, q.question_text, q.correct_answer,
+         q.distractors, q.per_question_format::text AS per_question_format
+       FROM challenges c
+       JOIN challenge_participants cp ON cp.challenge_id = c.id AND cp.user_id = $2
+       JOIN question_sets qs ON qs.challenge_id = c.id
+       JOIN questions q ON q.set_id = qs.id
+       LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+       WHERE c.id = $1
+         AND ${validQuestion}
+     )
+     SELECT *
+       FROM valid_questions vq
+      WHERE NOT EXISTS (
+        SELECT 1 FROM attempts a
+         WHERE a.question_id = vq.question_id AND a.user_id = $2
+      )
+      ORDER BY vq.position
+      LIMIT 1`,
     [challengeId, userId]
   );
   return rows[0] ?? null;

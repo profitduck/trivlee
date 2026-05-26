@@ -1,5 +1,6 @@
 import "server-only";
 import { query } from "./db";
+import { validQuestionPredicate } from "./question-validity";
 
 export interface Achievement {
   id: string;
@@ -130,6 +131,7 @@ interface UserAggregates {
 async function getUserAggregates(userId: string): Promise<UserAggregates> {
   // Pull a wide row of per-user metrics in one round-trip. Each subquery is
   // independent so the planner parallelizes them where it can.
+  const validQuestion = validQuestionPredicate("q_count", "qb_count");
   const { rows } = await query<{
     total_matches: string;
     total_points: string;
@@ -143,7 +145,16 @@ async function getUserAggregates(userId: string): Promise<UserAggregates> {
   }>(
     `WITH my_results AS (
        SELECT r.challenge_id, r.total_score, r.correct_count, r.total_time_ms,
-              r.completed_at, c.topic_normalized, c.num_questions, c.timer_mode,
+              r.completed_at, c.topic_normalized,
+              COALESCE((
+                SELECT COUNT(*)::int
+                  FROM question_sets qs_count
+                  JOIN questions q_count ON q_count.set_id = qs_count.id
+                  LEFT JOIN question_bank qb_count ON qb_count.id = q_count.bank_question_id
+                 WHERE qs_count.challenge_id = c.id
+                   AND ${validQuestion}
+              ), c.num_questions) AS num_questions,
+              c.timer_mode,
               (SELECT MAX(other.total_score) FROM results other WHERE other.challenge_id = r.challenge_id) AS top_score,
               (SELECT COUNT(*) FROM results r3 WHERE r3.challenge_id = r.challenge_id) AS player_count
          FROM results r

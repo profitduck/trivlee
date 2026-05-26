@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { validQuestionPredicate } from "@/lib/question-validity";
 import {
   failStuckGenerationsForUser,
   getPendingInvites,
@@ -49,6 +50,7 @@ interface LifetimeStats {
  * Rank uses RANK() so ties share a rank.
  */
 async function getLifetimeStats(userId: string): Promise<LifetimeStats> {
+  const validAnsweredQuestion = validQuestionPredicate("q_answered", "qb_answered");
   const { rows } = await query<{
     total_points: string;
     correct: string;
@@ -70,8 +72,13 @@ async function getLifetimeStats(userId: string): Promise<LifetimeStats> {
          COALESCE(SUM(r.total_score), 0)::numeric AS pts,
          COUNT(r.challenge_id)::int               AS matches_played,
          COALESCE(SUM(r.correct_count), 0)::int   AS correct,
-         (SELECT COUNT(*) FROM attempts a
-            WHERE a.user_id = u.id AND a.user_answer IS NOT NULL) AS answered,
+         (SELECT COUNT(*)
+            FROM attempts a
+            JOIN questions q_answered ON q_answered.id = a.question_id
+            LEFT JOIN question_bank qb_answered ON qb_answered.id = q_answered.bank_question_id
+           WHERE a.user_id = u.id
+             AND a.user_answer IS NOT NULL
+             AND ${validAnsweredQuestion}) AS answered,
          COALESCE(SUM(
            CASE WHEN mm.max_score = r.total_score AND mm.player_count > 1
                 THEN 1 ELSE 0 END

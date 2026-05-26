@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { ArrowLeft, Trophy, Crown, Medal, Target, Flame } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { validQuestionPredicate } from "@/lib/question-validity";
 import { cn } from "@/lib/utils";
 
 /**
@@ -76,6 +76,7 @@ async function getGlobalLeaderboard(
     ? `JOIN challenges c ON c.id = r.challenge_id AND c.topic_normalized = $2`
     : `JOIN challenges c ON c.id = r.challenge_id`;
   const params: (string | number)[] = topicNormalized ? [limit, topicNormalized] : [limit];
+  const validAnsweredQuestion = validQuestionPredicate("q_answered", "qb_answered");
 
   const { rows } = await query<{
     user_id: string;
@@ -101,9 +102,14 @@ async function getGlobalLeaderboard(
        u.id AS user_id, u.username, u.display_name,
        COALESCE(SUM(r.total_score), 0)::numeric AS total_points,
        COALESCE(SUM(r.correct_count), 0)::int  AS correct,
-       (SELECT COUNT(*) FROM attempts a
+       (SELECT COUNT(*)
+          FROM attempts a
+          JOIN questions q_answered ON q_answered.id = a.question_id
+          LEFT JOIN question_bank qb_answered ON qb_answered.id = q_answered.bank_question_id
           ${topicNormalized ? "JOIN challenges c2 ON c2.id = a.challenge_id AND c2.topic_normalized = $2" : ""}
-          WHERE a.user_id = u.id AND a.user_answer IS NOT NULL) AS questions_answered,
+          WHERE a.user_id = u.id
+            AND a.user_answer IS NOT NULL
+            AND ${validAnsweredQuestion}) AS questions_answered,
        COUNT(r.challenge_id)::int AS matches_played,
        SUM(
          CASE

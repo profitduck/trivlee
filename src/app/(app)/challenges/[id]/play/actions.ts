@@ -8,6 +8,7 @@ import {
   type GradeResult,
 } from "@/lib/grading";
 import { finalizeAllParticipants, isParticipant } from "@/lib/matches";
+import { validQuestionPredicate } from "@/lib/question-validity";
 
 export interface SubmitAnswerResult {
   ok: true;
@@ -28,6 +29,7 @@ export async function submitAnswer(
   const user = await requireUser();
 
   // Load the question and challenge sanity bits
+  const validQuestion = validQuestionPredicate("q", "qb");
   const questionRow = await query<{
     id: string;
     challenge_id: string;
@@ -42,15 +44,24 @@ export async function submitAnswer(
     status: string;
     closed_at: string | null;
     max_players: number | null;
+    valid_question_count: number;
   }>(
     `SELECT
        q.id, qs.challenge_id, q.question_text, q.correct_answer, q.answer_aliases, q.distractors,
        q.source_hint, q.per_question_format::text AS per_question_format,
        c.num_questions, c.challenger_id, c.status::text AS status,
-       c.closed_at, c.max_players
+       c.closed_at, c.max_players,
+       (
+         SELECT COUNT(*)::int
+           FROM questions q_count
+           LEFT JOIN question_bank qb_count ON qb_count.id = q_count.bank_question_id
+          WHERE q_count.set_id = qs.id
+            AND ${validQuestionPredicate("q_count", "qb_count")}
+       ) AS valid_question_count
      FROM questions q
      JOIN question_sets qs ON qs.id = q.set_id
      JOIN challenges c ON c.id = qs.challenge_id
+     LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
      WHERE q.id = $1 AND qs.challenge_id = $2`,
     [questionId, challengeId]
   );
@@ -59,6 +70,10 @@ export async function submitAnswer(
     return { ok: false, error: "Question not found." };
   }
   const q = questionRow.rows[0];
+
+  if (!(await isStillValidQuestion(questionId, challengeId, validQuestion))) {
+    return { ok: false, error: "This question was removed from scoring." };
+  }
 
   if (!(await isParticipant(challengeId, user.id))) {
     return { ok: false, error: "You aren't a participant in this match." };
@@ -130,20 +145,36 @@ export async function submitAnswer(
     participant_count: string;
   }>(
     `SELECT
-       (SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = $1 AND a.user_id = $2) AS my_count,
+       (
+         SELECT COUNT(*)
+           FROM attempts a
+           JOIN questions q_progress ON q_progress.id = a.question_id
+           LEFT JOIN question_bank qb_progress ON qb_progress.id = q_progress.bank_question_id
+          WHERE a.challenge_id = $1
+            AND a.user_id = $2
+            AND ${validQuestionPredicate("q_progress", "qb_progress")}
+       ) AS my_count,
        (
          SELECT COUNT(*)
          FROM challenge_participants cp
          WHERE cp.challenge_id = $1
-           AND (SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = $1 AND a.user_id = cp.user_id) < $3
+           AND (
+             SELECT COUNT(*)
+               FROM attempts a
+               JOIN questions q_progress ON q_progress.id = a.question_id
+               LEFT JOIN question_bank qb_progress ON qb_progress.id = q_progress.bank_question_id
+              WHERE a.challenge_id = $1
+                AND a.user_id = cp.user_id
+                AND ${validQuestionPredicate("q_progress", "qb_progress")}
+           ) < $3
        ) AS total_unfinished,
        (SELECT COUNT(*) FROM challenge_participants cp WHERE cp.challenge_id = $1) AS participant_count`,
-    [challengeId, user.id, q.num_questions]
+    [challengeId, user.id, q.valid_question_count]
   );
   const myCount = Number(progress[0].my_count);
   const totalUnfinished = Number(progress[0].total_unfinished);
   const participantCount = Number(progress[0].participant_count);
-  const myDone = myCount >= q.num_questions;
+  const myDone = myCount >= q.valid_question_count;
 
   // Auto-finalize only when the cap is fully filled AND everyone is done.
   if (
@@ -170,6 +201,26 @@ export async function submitAnswer(
     sourceHint: q.source_hint,
     isLast: myDone,
   };
+}
+
+async function isStillValidQuestion(
+  questionId: string,
+  challengeId: string,
+  validQuestion: string
+): Promise<boolean> {
+  const { rows } = await query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM questions q
+         JOIN question_sets qs ON qs.id = q.set_id
+         LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+        WHERE q.id = $1
+          AND qs.challenge_id = $2
+          AND ${validQuestion}
+     ) AS "exists"`,
+    [questionId, challengeId]
+  );
+  return rows[0]?.exists === true;
 }
 
 interface MultipleChoiceGradeInput {

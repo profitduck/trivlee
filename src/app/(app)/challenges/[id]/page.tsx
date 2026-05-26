@@ -24,6 +24,7 @@ import {
   lazyCloseIfDue,
   type Participant,
 } from "@/lib/matches";
+import { validQuestionPredicate } from "@/lib/question-validity";
 import { closeMatchAction } from "./actions";
 import { CopyInviteLink } from "./copy-invite-link";
 import { DeleteMatchButton } from "./delete-match-button";
@@ -38,6 +39,7 @@ interface ChallengeDetail {
   difficulty_requested: number;
   difficulty_delivered: number | null;
   num_questions: number;
+  valid_question_count: number;
   format: string;
   mode: string;
   time_per_question_s: number | null;
@@ -51,6 +53,7 @@ interface ChallengeDetail {
 }
 
 async function getChallenge(id: string): Promise<ChallengeDetail | null> {
+  const validQuestion = validQuestionPredicate("q", "qb");
   const { rows } = await query<ChallengeDetail>(
     `SELECT
        c.id, c.challenger_id, c.topic, c.topic_interpretation,
@@ -59,7 +62,15 @@ async function getChallenge(id: string): Promise<ChallengeDetail | null> {
        c.time_per_question_s, c.total_time_s,
        c.status::text AS status, c.invite_token,
        c.max_players, c.auto_close_at, c.closed_at,
-       c.generation_phase
+       c.generation_phase,
+       COALESCE((
+         SELECT COUNT(*)::int
+           FROM question_sets qs
+           JOIN questions q ON q.set_id = qs.id
+           LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+          WHERE qs.challenge_id = c.id
+            AND ${validQuestion}
+       ), c.num_questions) AS valid_question_count
      FROM challenges c
      WHERE c.id = $1`,
     [id]
@@ -112,8 +123,9 @@ export default async function ChallengePage({
   const participants = await getParticipants(id);
   const me = participants.find((p) => p.user_id === user.id);
   const youAreChallenger = c.challenger_id === user.id;
+  const totalQuestions = c.valid_question_count || c.num_questions;
   const myProgress = me?.answered_count ?? 0;
-  const myDone = myProgress >= c.num_questions;
+  const myDone = myProgress >= totalQuestions;
   const isOpen = c.closed_at === null && c.status !== "completed" && c.status !== "cancelled";
   const isFull = c.max_players !== null && participants.length >= c.max_players;
 
@@ -145,7 +157,7 @@ export default async function ChallengePage({
           </Badge>
         </div>
         <h1 className="font-display text-4xl font-extrabold tracking-tighter">{c.topic}</h1>
-        <p className="text-muted-foreground">{c.num_questions} questions</p>
+        <p className="text-muted-foreground">{totalQuestions} questions</p>
       </header>
 
       {c.topic_interpretation && (
@@ -197,7 +209,7 @@ export default async function ChallengePage({
               <ParticipantRow
                 key={p.user_id}
                 p={p}
-                total={c.num_questions}
+                total={totalQuestions}
                 rank={i + 1}
                 isYou={p.user_id === user.id}
                 someoneHasScore={participants.some((q) => q.total_score > 0)}
@@ -313,14 +325,11 @@ function RankBadge({ rank }: { rank: number }) {
 }
 
 function RelativeTime({ iso }: { iso: string }) {
-  const target = new Date(iso).getTime();
-  const now = Date.now();
-  const diffMs = target - now;
-  const absMin = Math.abs(Math.round(diffMs / 60000));
-  const future = diffMs > 0;
-  let label: string;
-  if (absMin < 60) label = `${absMin}m`;
-  else if (absMin < 60 * 24) label = `${Math.round(absMin / 60)}h`;
-  else label = `${Math.round(absMin / (60 * 24))}d`;
-  return <span className="font-mono">{future ? `in ${label}` : `${label} ago`}</span>;
+  const label = new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return <time className="font-mono" dateTime={iso}>{label}</time>;
 }

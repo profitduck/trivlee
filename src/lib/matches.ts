@@ -1,5 +1,6 @@
 import "server-only";
 import { query } from "./db";
+import { validQuestionPredicate } from "./question-validity";
 
 export interface Participant {
   user_id: string;
@@ -143,16 +144,21 @@ export async function closeChallenge(challengeId: string): Promise<void> {
  * (with partial credit for non-finishers) and at normal match-end.
  */
 export async function finalizeAllParticipants(challengeId: string): Promise<void> {
+  const validAttempt = `a.id IS NOT NULL AND q.id IS NOT NULL AND ${validQuestionPredicate("q", "qb")}`;
   await query(
     `INSERT INTO results (challenge_id, user_id, total_score, correct_count, total_time_ms, completed_at)
      SELECT cp.challenge_id, cp.user_id,
-            COALESCE(SUM(a.score), 0),
-            COALESCE(SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(a.time_taken_ms), 0),
+            COALESCE(SUM(CASE WHEN ${validAttempt} THEN a.score ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ${validAttempt} AND a.is_correct THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ${validAttempt} THEN a.time_taken_ms ELSE 0 END), 0),
             now()
        FROM challenge_participants cp
        LEFT JOIN attempts a
          ON a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id
+       LEFT JOIN questions q
+         ON q.id = a.question_id
+       LEFT JOIN question_bank qb
+         ON qb.id = q.bank_question_id
       WHERE cp.challenge_id = $1
       GROUP BY cp.challenge_id, cp.user_id
         ON CONFLICT (challenge_id, user_id) DO UPDATE
@@ -316,6 +322,7 @@ export async function getPendingInvites(userId: string): Promise<PendingInvite[]
  * Fetch all participants in a match, ordered by score desc (for leaderboard).
  */
 export async function getParticipants(challengeId: string): Promise<Participant[]> {
+  const validQuestion = validQuestionPredicate("q", "qb");
   const { rows } = await query<{
     user_id: string;
     username: string;
@@ -328,9 +335,33 @@ export async function getParticipants(challengeId: string): Promise<Participant[
   }>(
     `SELECT
        cp.user_id, u.username, u.display_name, cp.is_challenger, cp.joined_at,
-       COALESCE((SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id), 0) AS answered_count,
-       COALESCE((SELECT SUM(score) FROM attempts a WHERE a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id), 0) AS total_score,
-       COALESCE((SELECT SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) FROM attempts a WHERE a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id), 0) AS is_correct_count
+       COALESCE((
+         SELECT COUNT(*)
+           FROM attempts a
+           JOIN questions q ON q.id = a.question_id
+           LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+          WHERE a.challenge_id = cp.challenge_id
+            AND a.user_id = cp.user_id
+            AND ${validQuestion}
+       ), 0) AS answered_count,
+       COALESCE((
+         SELECT SUM(a.score)
+           FROM attempts a
+           JOIN questions q ON q.id = a.question_id
+           LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+          WHERE a.challenge_id = cp.challenge_id
+            AND a.user_id = cp.user_id
+            AND ${validQuestion}
+       ), 0) AS total_score,
+       COALESCE((
+         SELECT SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END)
+           FROM attempts a
+           JOIN questions q ON q.id = a.question_id
+           LEFT JOIN question_bank qb ON qb.id = q.bank_question_id
+          WHERE a.challenge_id = cp.challenge_id
+            AND a.user_id = cp.user_id
+            AND ${validQuestion}
+       ), 0) AS is_correct_count
      FROM challenge_participants cp
      JOIN users u ON u.id = cp.user_id
      WHERE cp.challenge_id = $1
