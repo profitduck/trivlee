@@ -70,7 +70,13 @@ export function researcherSearchTool(difficulty: number) {
 }
 
 export function validatorSearchTool(difficulty: number) {
-  const max_uses = difficulty >= 8 ? 8 : 5;
+  // Lowered from 5/8 → 3/5: each search adds ~5-8s wall time (the search
+  // itself plus the model reading 1.5-3K tokens of returned page content).
+  // For topics where allowlist sources are sparse (e.g. movie quotes —
+  // Wikiquote isn't in the allowlist) the model would burn the full budget
+  // and still mark facts low-confidence. Capping tighter forces it to triage
+  // earlier and keeps total wall time predictable.
+  const max_uses = difficulty >= 8 ? 5 : 3;
   return {
     type: "web_search_20260209" as const,
     name: "web_search" as const,

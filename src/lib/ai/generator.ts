@@ -38,10 +38,14 @@ export async function generateQuestions(
     return await runPipeline(req, onPhase);
   } catch (err) {
     console.error("[generator] runPipeline threw:", err);
-    throw new AIGenerationError(
-      "The AI couldn't be reached. Please try again in a moment.",
-      err
-    );
+    // Surface the pipeline's own message when it has one (e.g. timeout text
+    // mentioning how long elapsed and what the user can do). Fall back to a
+    // generic message for opaque SDK / network errors.
+    const message =
+      err instanceof Error && err.name === "PipelineTimeoutError"
+        ? err.message
+        : "The AI couldn't be reached. Please try again in a moment.";
+    throw new AIGenerationError(message, err);
   }
 }
 

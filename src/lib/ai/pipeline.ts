@@ -10,6 +10,45 @@ import type {
   ValidatedFact,
 } from "./types";
 
+// Hard ceiling on total pipeline wall time. Past this we surface a clean
+// failure instead of letting the user stare at the spinner indefinitely.
+// Anthropic's individual SDK calls have their own 10-minute default timeout;
+// this is the orchestrator-level cap so we never burn that much.
+//
+// Tuned against observed runs:
+//   - Healthy D1-7 match: ~30-60s
+//   - Healthy D8-10 or niche topic: ~60-120s
+//   - Pathological (sparse allowlist for topic, slow API): 180s+
+// 180s gives plenty of headroom for healthy runs and bails on the rest.
+const PIPELINE_TIMEOUT_MS = 180_000;
+
+class PipelineTimeoutError extends Error {
+  constructor(elapsedMs: number) {
+    super(
+      `Pipeline exceeded ${Math.round(PIPELINE_TIMEOUT_MS / 1000)}s timeout (${Math.round(elapsedMs / 1000)}s elapsed). ` +
+      `Try a more well-known topic or lower difficulty.`
+    );
+    this.name = "PipelineTimeoutError";
+  }
+}
+
+/**
+ * Wrap a promise with a deadline. If it doesn't resolve in `ms`, reject with
+ * PipelineTimeoutError. The underlying work keeps running (no AbortSignal)
+ * but the caller stops waiting and surfaces failure to the user.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, startedAt: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => {
+      reject(new PipelineTimeoutError(performance.now() - startedAt));
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
 /**
  * Optional progress hook so the caller can update generation_phase as each
  * stage starts. Synchronous and lightweight — the caller writes to DB.
@@ -42,10 +81,25 @@ export async function runPipeline(
   onPhase?: PhaseHook
 ): Promise<GenerationResponse> {
   const overallStart = performance.now();
+  return withTimeout(runPipelineInner(req, onPhase, overallStart), PIPELINE_TIMEOUT_MS, overallStart);
+}
+
+async function runPipelineInner(
+  req: GenerationRequest,
+  onPhase: PhaseHook | undefined,
+  overallStart: number
+): Promise<GenerationResponse> {
+  // Per-stage logging breadcrumbs. Visible in Railway logs so we can diagnose
+  // future stuck matches by reading where the time went.
+  const log = (msg: string) =>
+    console.log(`[pipeline] +${Math.round(performance.now() - overallStart)}ms ${msg}`);
+
+  log(`start topic="${req.topic.slice(0, 40)}" diff=${req.difficulty} count=${req.count}`);
 
   // ─── Stage 1: research ───────────────────────────────────────────────────
   await onPhase?.("researching");
   const research = await researchFacts(req);
+  log(`research done in ${research.meta.latency_ms}ms, ${research.facts.length} facts`);
 
   // Researcher said no — surface that to the caller cleanly.
   if (!research.topic_safe || research.facts.length === 0) {
@@ -86,6 +140,7 @@ export async function runPipeline(
   const { validated, latencyMs: validate_ms } = validateResult;
   let totalWriteMs = writerOut.meta.latency_ms;
   let repairWriteMs: number | undefined;
+  log(`validate done in ${validate_ms}ms, write done in ${writerOut.meta.latency_ms}ms (parallel block)`);
 
   // Build the verified-fact-index set. Only high-confidence verifications
   // survive — anything less is treated as a hallucination risk.
@@ -177,6 +232,7 @@ export async function runPipeline(
       totalWriteMs += repairOut.meta.latency_ms;
       repairWriteMs = repairOut.meta.latency_ms;
       writerWarning = combineWarnings(writerWarning, repairOut.knowledge_warning);
+      log(`repair pass done in ${repairOut.meta.latency_ms}ms, added ${repairOut.questions.length} questions`);
 
       const seenRepairFactIndices = new Set<number>();
       const seenQuestionKeys = new Set(finalSpec.map(questionKey));
@@ -207,6 +263,7 @@ export async function runPipeline(
   }
 
   const latency_ms = Math.round(performance.now() - overallStart);
+  log(`pipeline complete in ${latency_ms}ms, delivered ${finalQuestions.length}/${req.count} questions`);
   return {
     topic_interpretation: writerOut.topic_interpretation,
     topic_safe: writerOut.topic_safe,
