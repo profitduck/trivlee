@@ -34,6 +34,62 @@ function generateInviteToken(): string {
   return randomBytes(16).toString("base64url");
 }
 
+const OVERSAMPLE_RATIO = 1.3; // request 30% more than the target to absorb verifier drops
+const MAX_OVERSAMPLE = 25;
+const MAX_BACKFILL_ROUNDS = 1;
+
+function computeOversample(target: number): number {
+  return Math.min(MAX_OVERSAMPLE, Math.ceil(target * OVERSAMPLE_RATIO));
+}
+
+/**
+ * Verify a batch of generated questions against the Sonnet verifier.
+ * Returns the survivors (accurate=true, confidence=high) and the dropped ones.
+ */
+async function verifyBatch(
+  questions: GeneratedQuestion[],
+  topic: string
+): Promise<{
+  survivors: GeneratedQuestion[];
+  dropped: { question: string; reason: string }[];
+  latencyMs: number;
+}> {
+  const start = performance.now();
+  const verifications = await Promise.all(
+    questions.map((q) =>
+      verifyQuestion({
+        topic,
+        question: q.question,
+        correctAnswer: q.correct_answer,
+        distractors: q.distractors,
+        sourceHint: q.source_hint,
+      })
+    )
+  );
+  const survivors: GeneratedQuestion[] = [];
+  const dropped: { question: string; reason: string }[] = [];
+  questions.forEach((q, i) => {
+    const v = verifications[i];
+    if (v === null) {
+      survivors.push(q);
+      return;
+    }
+    if (!v.accurate || v.confidence !== "high") {
+      dropped.push({ question: q.question.slice(0, 80), reason: v.reason });
+      console.warn(
+        `[verifier] dropped (accurate=${v.accurate}, confidence=${v.confidence}): "${q.question.slice(0, 60)}…" — ${v.reason}`
+      );
+      return;
+    }
+    survivors.push(q);
+  });
+  return {
+    survivors,
+    dropped,
+    latencyMs: Math.round(performance.now() - start),
+  };
+}
+
 export async function createChallenge(input: CreateChallengeInput) {
   const user = await requireUser();
 
@@ -124,13 +180,15 @@ export async function createChallenge(input: CreateChallengeInput) {
   let generatedBy = `bank (${bankQuestions.length}/${input.numQuestions})`;
 
   if (needFromAI > 0) {
+    // Oversample by ~30% so the verifier's drops usually leave us with enough.
+    const oversampleCount = computeOversample(needFromAI);
     let result;
     try {
       result = await generateQuestions({
         topic,
         difficulty: input.difficulty,
         format: input.format,
-        count: needFromAI,
+        count: oversampleCount,
       });
     } catch (err) {
       // Roll back the pending challenge so the user can retry cleanly.
@@ -165,50 +223,69 @@ export async function createChallenge(input: CreateChallengeInput) {
       topicInterpretation = result.topic_interpretation;
       knowledgeWarning = result.knowledge_warning;
       difficultyDelivered = result.difficulty_delivered;
-      generationMeta = { latency_ms: result.meta.latency_ms, bank_used: bankQuestions.length };
+      generationMeta = {
+        latency_ms: result.meta.latency_ms,
+        bank_used: bankQuestions.length,
+        oversample_target: oversampleCount,
+        oversample_received: result.questions.length,
+      };
       generatedBy = bankQuestions.length > 0
         ? `mixed: ${result.meta.generated_by} + bank (${bankQuestions.length}/${input.numQuestions})`
         : result.meta.generated_by;
 
-      // ─── Verification pass — Haiku fact-checks each generated question ──
-      // Drop ones that fail (accurate: false) or that the verifier isn't
-      // confident about (confidence: low). Bank questions skip this — they've
-      // already been through it once.
-      const verifyStart = performance.now();
-      const verifications = await Promise.all(
-        aiQuestions.map((q) =>
-          verifyQuestion({
+      // ─── Verification pass ──────────────────────────────────────────────
+      const initial = await verifyBatch(aiQuestions, topic);
+      aiQuestions = initial.survivors;
+      let totalDropped = initial.dropped.length;
+      let totalVerifyLatencyMs = initial.latencyMs;
+      let backfillsAttempted = 0;
+      let backfillsRecovered = 0;
+
+      // ─── Backfill if oversampling wasn't enough ────────────────────────
+      // The user requested input.numQuestions. We have bankQuestions + aiQuestions
+      // so far. If we're still short, generate a smaller batch and verify it.
+      // Capped at MAX_BACKFILL_ROUNDS to bound latency and cost.
+      while (
+        bankQuestions.length + aiQuestions.length < input.numQuestions &&
+        backfillsAttempted < MAX_BACKFILL_ROUNDS
+      ) {
+        const shortfall =
+          input.numQuestions - bankQuestions.length - aiQuestions.length;
+        const refillCount = computeOversample(shortfall);
+        backfillsAttempted++;
+        try {
+          const refillResult = await generateQuestions({
             topic,
-            question: q.question,
-            correctAnswer: q.correct_answer,
-            distractors: q.distractors,
-            sourceHint: q.source_hint,
-          })
-        )
-      );
-      const dropped: { question: string; reason: string }[] = [];
-      aiQuestions = aiQuestions.filter((q, i) => {
-        const v = verifications[i];
-        if (v === null) return true; // verifier unavailable, pass-through
-        // Strict mode: only keep questions the verifier rates accurate AND high-confidence.
-        // Medium/low confidence both get dropped — we'd rather show fewer questions
-        // than ship something the verifier wasn't sure about.
-        if (!v.accurate || v.confidence !== "high") {
-          dropped.push({ question: q.question.slice(0, 80), reason: v.reason });
-          console.warn(
-            `[verifier] dropped (accurate=${v.accurate}, confidence=${v.confidence}): "${q.question.slice(0, 60)}…" — ${v.reason}`
-          );
-          return false;
+            difficulty: input.difficulty,
+            format: input.format,
+            count: refillCount,
+          });
+          if (refillResult.topic_safe && refillResult.questions.length > 0) {
+            const refillVerify = await verifyBatch(refillResult.questions, topic);
+            aiQuestions = [...aiQuestions, ...refillVerify.survivors];
+            backfillsRecovered += refillVerify.survivors.length;
+            totalDropped += refillVerify.dropped.length;
+            totalVerifyLatencyMs += refillVerify.latencyMs;
+          }
+        } catch (err) {
+          console.warn("Backfill round failed; continuing with current questions:", err);
+          break;
         }
-        return true;
-      });
+      }
+
       generationMeta = {
         ...generationMeta,
-        verifier_dropped: dropped.length,
-        verifier_latency_ms: Math.round(performance.now() - verifyStart),
+        verifier_dropped: totalDropped,
+        verifier_latency_ms: totalVerifyLatencyMs,
+        backfills_attempted: backfillsAttempted,
+        backfills_recovered: backfillsRecovered,
       };
-      if (dropped.length > 0) {
-        const note = `Fact-checker dropped ${dropped.length} question${dropped.length === 1 ? "" : "s"}.`;
+
+      // Only show the user a warning when we actually fell short, not when
+      // oversampling absorbed the drops invisibly.
+      const finalAvailable = bankQuestions.length + aiQuestions.length;
+      if (finalAvailable < input.numQuestions) {
+        const note = `Fact-checker kept only ${finalAvailable} of ${input.numQuestions} requested questions.`;
         knowledgeWarning = knowledgeWarning ? `${knowledgeWarning} ${note}` : note;
       }
     }
@@ -252,21 +329,29 @@ export async function createChallenge(input: CreateChallengeInput) {
   );
   const setId = setInsert.rows[0].id;
 
-  // Add fresh AI questions to the bank first so we have IDs for backref.
+  // Add ALL verified AI questions to the bank — including oversample extras
+  // that won't fit in this match. Future matches on the same topic/difficulty
+  // can draw them with no fresh API call.
   const newBankIds = await addToBank(topicNormalized, difficultyDelivered, aiQuestions);
+
+  // Trim AI questions for THIS match. Bank-drawn questions all stay; we trim
+  // from the AI side since we already paid for the bank lookup.
+  const aiKeepCount = Math.max(0, input.numQuestions - bankQuestions.length);
+  const aiForMatch = aiQuestions.slice(0, aiKeepCount);
+  const aiBankIdsForMatch = newBankIds.slice(0, aiKeepCount);
 
   // Interleave bank-drawn and freshly-generated so position 1 isn't always
   // cached and position N isn't always fresh — just gives a varied feel.
   const combined: { q: GeneratedQuestion; bankId: string | null }[] = [];
   let bi = 0;
   let ai = 0;
-  while (bi < bankQuestions.length || ai < aiQuestions.length) {
+  while (bi < bankQuestions.length || ai < aiForMatch.length) {
     if (bi < bankQuestions.length) {
       combined.push({ q: bankQuestions[bi], bankId: bankIds[bi] });
       bi++;
     }
-    if (ai < aiQuestions.length) {
-      combined.push({ q: aiQuestions[ai], bankId: newBankIds[ai] ?? null });
+    if (ai < aiForMatch.length) {
+      combined.push({ q: aiForMatch[ai], bankId: aiBankIdsForMatch[ai] ?? null });
       ai++;
     }
   }
