@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Flag, ArrowLeft, EyeOff, Check, ShieldCheck } from "lucide-react";
+import { Flag, ArrowLeft, EyeOff, Check, ShieldCheck, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,17 +21,37 @@ interface ReportRow {
   challenge_topic: string;
   total_reports: number;
   hidden_in_bank: boolean;
+  ai_fact_check_verdict: string;
+  ai_fact_check_confidence: number | null;
+  ai_fact_check_summary: string | null;
+  ai_fact_check_evidence: string | null;
+  ai_fact_check_corrected_answer: string | null;
+  ai_fact_check_sources: string[];
+  ai_fact_checked_at: string | null;
 }
 
 async function getOpenReports(): Promise<ReportRow[]> {
-  const { rows } = await query<ReportRow & { total_reports: string }>(
+  const { rows } = await query<
+    Omit<ReportRow, "total_reports" | "ai_fact_check_confidence" | "ai_fact_check_sources"> & {
+      total_reports: string;
+      ai_fact_check_confidence: string | null;
+      ai_fact_check_sources: unknown;
+    }
+  >(
     `SELECT
        qr.id, qr.question_id, q.question_text, q.correct_answer, q.bank_question_id,
        u.username AS reporter_username,
        qr.reason, qr.status::text AS status, qr.created_at,
        qs.challenge_id, c.topic AS challenge_topic,
        (SELECT COUNT(*) FROM question_reports x WHERE x.question_id = q.id) AS total_reports,
-       COALESCE(qb.hidden, false) AS hidden_in_bank
+       COALESCE(qb.hidden, false) AS hidden_in_bank,
+       qr.ai_fact_check_verdict::text AS ai_fact_check_verdict,
+       qr.ai_fact_check_confidence,
+       qr.ai_fact_check_summary,
+       qr.ai_fact_check_evidence,
+       qr.ai_fact_check_corrected_answer,
+       qr.ai_fact_check_sources,
+       qr.ai_fact_checked_at
      FROM question_reports qr
      JOIN questions q ON q.id = qr.question_id
      JOIN users u ON u.id = qr.reporter_id
@@ -42,7 +62,15 @@ async function getOpenReports(): Promise<ReportRow[]> {
      ORDER BY qr.created_at DESC
      LIMIT 100`
   );
-  return rows.map((r) => ({ ...r, total_reports: Number(r.total_reports) }));
+  return rows.map((r) => ({
+    ...r,
+    total_reports: Number(r.total_reports),
+    ai_fact_check_confidence:
+      r.ai_fact_check_confidence === null ? null : Number(r.ai_fact_check_confidence),
+    ai_fact_check_sources: Array.isArray(r.ai_fact_check_sources)
+      ? r.ai_fact_check_sources.filter((s): s is string => typeof s === "string")
+      : [],
+  }));
 }
 
 export default async function AdminReportsPage() {
@@ -126,6 +154,7 @@ function ReportCard({ r }: { r: ReportRow }) {
           </p>
           <p className="text-sm">{r.reason}</p>
         </div>
+        <FactCheckSummary r={r} />
         <div className="flex justify-end gap-2">
           <form action={dismissReport.bind(null, r.id)}>
             <Button type="submit" variant="ghost" size="sm" className="gap-1.5">
@@ -143,4 +172,78 @@ function ReportCard({ r }: { r: ReportRow }) {
       </CardContent>
     </Card>
   );
+}
+
+function FactCheckSummary({ r }: { r: ReportRow }) {
+  const variant = factCheckBadgeVariant(r.ai_fact_check_verdict);
+  const confidence =
+    r.ai_fact_check_confidence === null
+      ? null
+      : `${Math.round(r.ai_fact_check_confidence * 100)}%`;
+
+  return (
+    <div className="rounded-lg border bg-card/60 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <Badge variant={variant} className="gap-1">
+          <Bot className="size-3" />
+          {factCheckLabel(r.ai_fact_check_verdict)}
+        </Badge>
+        {confidence && (
+          <span className="text-xs text-muted-foreground">
+            {confidence} confidence
+          </span>
+        )}
+      </div>
+      {r.ai_fact_check_summary && (
+        <p className="text-sm font-medium leading-snug">{r.ai_fact_check_summary}</p>
+      )}
+      {r.ai_fact_check_evidence && (
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {r.ai_fact_check_evidence}
+        </p>
+      )}
+      {r.ai_fact_check_corrected_answer && (
+        <p className="text-xs">
+          <span className="text-muted-foreground">Suggested answer:</span>{" "}
+          <span className="font-semibold">{r.ai_fact_check_corrected_answer}</span>
+        </p>
+      )}
+      {r.ai_fact_check_sources.length > 0 && (
+        <p className="text-[11px] text-muted-foreground truncate">
+          Sources: {r.ai_fact_check_sources.join(" · ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function factCheckLabel(verdict: string): string {
+  switch (verdict) {
+    case "supported":
+      return "AI: answer supported";
+    case "wrong_answer":
+      return "AI: answer may be wrong";
+    case "bad_question":
+      return "AI: question is flawed";
+    case "uncertain":
+      return "AI: unsure";
+    case "error":
+      return "AI check failed";
+    default:
+      return "AI checking";
+  }
+}
+
+function factCheckBadgeVariant(verdict: string): "default" | "secondary" | "destructive" | "outline" {
+  switch (verdict) {
+    case "supported":
+      return "default";
+    case "wrong_answer":
+    case "bad_question":
+      return "destructive";
+    case "uncertain":
+      return "secondary";
+    default:
+      return "outline";
+  }
 }

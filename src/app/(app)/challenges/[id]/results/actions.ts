@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import {
@@ -8,6 +9,7 @@ import {
   incrementBankReport,
   recomputeBankQuality,
 } from "@/lib/ai/question-bank";
+import { factCheckReportedQuestion } from "@/lib/ai/report-fact-checker";
 
 export async function reportQuestion(
   questionId: string,
@@ -31,19 +33,43 @@ export async function reportQuestion(
     [questionId, user.id, trimmed]
   );
   const isNewReport = rows.length > 0;
+  let reportId = rows[0]?.id ?? null;
 
   // If they're updating an existing report (e.g. clarifying the reason), don't
   // double-count it on the bank.
   if (!isNewReport) {
-    await query(
+    const updated = await query<{ id: string }>(
       `UPDATE question_reports
-          SET reason = $3, status = 'open', created_at = now()
-        WHERE question_id = $1 AND reporter_id = $2`,
+          SET reason = $3,
+              status = 'open',
+              created_at = now(),
+              ai_fact_check_verdict = 'pending',
+              ai_fact_check_confidence = NULL,
+              ai_fact_check_summary = NULL,
+              ai_fact_check_evidence = NULL,
+              ai_fact_check_corrected_answer = NULL,
+              ai_fact_check_sources = '[]'::jsonb,
+              ai_fact_check_model = NULL,
+              ai_fact_checked_at = NULL
+        WHERE question_id = $1 AND reporter_id = $2
+        RETURNING id`,
       [questionId, user.id, trimmed]
     );
+    reportId = updated.rows[0]?.id ?? null;
   } else {
     const bankId = await getBankIdForQuestion(questionId);
     await incrementBankReport(bankId);
+  }
+
+  if (reportId) {
+    after(async () => {
+      try {
+        await factCheckReportedQuestion(reportId);
+        revalidatePath("/admin/reports");
+      } catch (err) {
+        console.error("[reportQuestion] background fact check failed:", err);
+      }
+    });
   }
 
   revalidatePath(`/challenges/${challengeId}/results`);
