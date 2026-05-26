@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { AIGenerationError, generateQuestions, normalizeTopic } from "@/lib/ai/generator";
+import { verifyQuestion } from "@/lib/ai/verifier";
 import { reserveAIGenerationSlot } from "@/lib/rate-limit";
 import {
   addToBank,
@@ -168,11 +169,68 @@ export async function createChallenge(input: CreateChallengeInput) {
       generatedBy = bankQuestions.length > 0
         ? `mixed: ${result.meta.generated_by} + bank (${bankQuestions.length}/${input.numQuestions})`
         : result.meta.generated_by;
+
+      // ─── Verification pass — Haiku fact-checks each generated question ──
+      // Drop ones that fail (accurate: false) or that the verifier isn't
+      // confident about (confidence: low). Bank questions skip this — they've
+      // already been through it once.
+      const verifyStart = performance.now();
+      const verifications = await Promise.all(
+        aiQuestions.map((q) =>
+          verifyQuestion({
+            topic,
+            question: q.question,
+            correctAnswer: q.correct_answer,
+            distractors: q.distractors,
+            sourceHint: q.source_hint,
+          })
+        )
+      );
+      const dropped: { question: string; reason: string }[] = [];
+      aiQuestions = aiQuestions.filter((q, i) => {
+        const v = verifications[i];
+        if (v === null) return true; // verifier unavailable, pass-through
+        if (!v.accurate || v.confidence === "low") {
+          dropped.push({ question: q.question.slice(0, 80), reason: v.reason });
+          console.warn(
+            `[verifier] dropped: "${q.question.slice(0, 60)}…" — ${v.reason}`
+          );
+          return false;
+        }
+        return true;
+      });
+      generationMeta = {
+        ...generationMeta,
+        verifier_dropped: dropped.length,
+        verifier_latency_ms: Math.round(performance.now() - verifyStart),
+      };
+      if (dropped.length > 0) {
+        const note = `Fact-checker dropped ${dropped.length} question${dropped.length === 1 ? "" : "s"}.`;
+        knowledgeWarning = knowledgeWarning ? `${knowledgeWarning} ${note}` : note;
+      }
     }
   } else {
     // 100% bank hit — no AI call at all.
     topicInterpretation = `Drawn from the question bank for "${topic}" at difficulty ${input.difficulty}.`;
     generationMeta = { bank_used: bankQuestions.length, api_calls: 0 };
+  }
+
+  // Safety net — verification may have dropped every AI question. If that
+  // happens AND the bank had nothing for us, the match would be empty.
+  if (aiQuestions.length === 0 && bankQuestions.length === 0) {
+    await query(
+      `UPDATE challenges SET status = 'cancelled', topic_interpretation = $2, knowledge_warning = $3 WHERE id = $1`,
+      [
+        challengeId,
+        topicInterpretation,
+        "Every generated question failed fact-checking. Try a different topic, lower difficulty, or come back later.",
+      ]
+    );
+    return {
+      error:
+        "Couldn't produce any verified questions for this topic. Try a different topic or lower difficulty.",
+      challengeId,
+    };
   }
 
   // ─── Phase E: insert question_set + questions ────────────────────────────
