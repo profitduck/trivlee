@@ -17,9 +17,14 @@ import { deleteMatchAction } from "./actions";
 export function DeleteMatchButton({
   challengeId,
   variant = "outline",
+  /** Override the visible verb. "Delete" for finished/cancelled matches; "Cancel" while generating. */
+  label = "Delete match",
+  confirmText = "Delete this match?",
 }: {
   challengeId: string;
   variant?: "default" | "outline" | "destructive" | "ghost";
+  label?: string;
+  confirmText?: string;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -30,7 +35,7 @@ export function DeleteMatchButton({
       <div className="inline-flex items-center gap-2 flex-wrap">
         <span className="text-sm font-medium text-destructive flex items-center gap-1.5">
           <AlertTriangle className="size-4" />
-          Delete this match?
+          {confirmText}
         </span>
         <Button
           type="button"
@@ -87,7 +92,7 @@ export function DeleteMatchButton({
         className="gap-1.5"
       >
         <Trash2 className="size-4" />
-        Delete match
+        {label}
       </Button>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </>

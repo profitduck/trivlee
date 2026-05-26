@@ -190,6 +190,18 @@ export function GenerationProgress({
             the match will appear automatically.
           </p>
         )}
+
+        {/* Cancel: nukes the in-flight challenge row. The background worker
+            may still be running but its UPDATEs and INSERTs will hit a
+            deleted row and no-op (or fail harmlessly inside its try/catch). */}
+        <div className="pt-2 border-t flex justify-center">
+          <DeleteMatchButton
+            challengeId={challengeId}
+            variant="ghost"
+            label="Cancel generation"
+            confirmText="Cancel this generation?"
+          />
+        </div>
       </CardContent>
     </Card>
   );

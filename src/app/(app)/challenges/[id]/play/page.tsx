@@ -10,6 +10,7 @@ interface NextQuestion {
   num_questions: number;
   time_per_question_s: number | null;
   total_time_s: number | null;
+  timer_mode: string;
   status: string;
   closed_at: string | null;
   play_started_at: string | null;
@@ -28,7 +29,7 @@ async function getNextQuestion(
   const { rows } = await query<NextQuestion>(
     `SELECT
        c.id AS challenge_id, c.topic, c.num_questions,
-       c.time_per_question_s, c.total_time_s,
+       c.time_per_question_s, c.total_time_s, c.timer_mode::text AS timer_mode,
        c.status::text AS status, c.closed_at,
        cp.play_started_at,
        q.position, q.id AS question_id, q.question_text, q.correct_answer,
@@ -111,14 +112,22 @@ export default async function PlayPage({
   // this to never re-serve a question even if they bail before submitting.
   await logQuestionView(next.question_id, user.id);
 
-  // Stamp play_started_at on first question render so the whole-quiz timer
-  // anchors when the user actually opens their first question, not at match creation.
+  // Stamp play_started_at on first question render so timers anchor when the
+  // user actually opens their first question, not at match creation. Both
+  // the total-time countdown and the stopwatch use this anchor.
   let totalDeadlineMs: number | null = null;
-  if (next.total_time_s !== null) {
+  let stopwatchStartedMs: number | null = null;
+  const needsStartStamp = next.total_time_s !== null || next.timer_mode === "stopwatch";
+  if (needsStartStamp) {
     const startedAt = next.play_started_at
       ? new Date(next.play_started_at)
       : await stampPlayStartedAt(id, user.id);
-    totalDeadlineMs = startedAt.getTime() + next.total_time_s * 1000;
+    if (next.total_time_s !== null) {
+      totalDeadlineMs = startedAt.getTime() + next.total_time_s * 1000;
+    }
+    if (next.timer_mode === "stopwatch") {
+      stopwatchStartedMs = startedAt.getTime();
+    }
   }
 
   // Shuffle distractors with correct answer for MC. Deterministic per question
@@ -144,6 +153,7 @@ export default async function PlayPage({
         perQuestionFormat={next.per_question_format as "multiple_choice" | "free_text"}
         timeLimitS={next.time_per_question_s}
         totalDeadlineMs={totalDeadlineMs}
+        stopwatchStartedMs={stopwatchStartedMs}
         options={options}
       />
     </div>

@@ -19,6 +19,10 @@ interface PlayCardProps {
   perQuestionFormat: "multiple_choice" | "free_text";
   timeLimitS: number | null;
   totalDeadlineMs: number | null;
+  /** Epoch ms when this user opened their first question. Non-null only when
+   *  timer_mode === 'stopwatch' — renders a count-up display used as the
+   *  tiebreaker on the leaderboard. */
+  stopwatchStartedMs: number | null;
   options: string[] | null;
 }
 
@@ -27,6 +31,13 @@ function formatClock(s: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function formatStopwatch(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 export function PlayCard(props: PlayCardProps) {
@@ -55,6 +66,21 @@ export function PlayCard(props: PlayCardProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [secondsLeft]);
+
+  // Stopwatch (count-up) — runs across the whole match, ticking every second
+  // while the user is on the play page. The leaderboard uses total_time_ms
+  // from the attempts table to break ties; this display is the visible cue.
+  const [stopwatchMs, setStopwatchMs] = useState<number | null>(() => {
+    if (props.stopwatchStartedMs == null) return null;
+    return Math.max(0, Date.now() - props.stopwatchStartedMs);
+  });
+  useEffect(() => {
+    if (props.stopwatchStartedMs == null) return;
+    const tick = setInterval(() => {
+      setStopwatchMs(Math.max(0, Date.now() - props.stopwatchStartedMs!));
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [props.stopwatchStartedMs]);
 
   // Whole-quiz timer
   const [totalSecondsLeft, setTotalSecondsLeft] = useState<number | null>(() => {
@@ -128,6 +154,18 @@ export function PlayCard(props: PlayCardProps) {
             </span>
           </div>
           <span className="text-base">{formatClock(totalSecondsLeft)}</span>
+        </div>
+      )}
+
+      {/* Stopwatch banner — count-up. No urgency styling; the user can take
+          as long as they want, but fastest wins ties. */}
+      {stopwatchMs != null && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border bg-muted border-border font-mono font-semibold tabular-nums">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Clock className="size-4" />
+            <span>Your time (fastest wins ties)</span>
+          </div>
+          <span className="text-base">{formatStopwatch(stopwatchMs)}</span>
         </div>
       )}
 

@@ -15,6 +15,7 @@ interface MatchView {
   topic: string;
   num_questions: number;
   challenger_id: string;
+  timer_mode: string;
 }
 
 interface LeaderboardRow {
@@ -25,6 +26,42 @@ interface LeaderboardRow {
   total_score: string;
   correct_count: string;
   answered_count: string;
+  total_time_ms: string | null;
+}
+
+/**
+ * Competition-style ranking: tied players share a rank, and the next rank
+ * skips by the size of the tie group. E.g. two-way tie for 1st → next is 3rd.
+ * Two players tie iff total_score AND correct_count both match; joined_at
+ * isn't a fair tiebreaker so we ignore it for tie detection.
+ */
+interface RankedRow {
+  row: LeaderboardRow;
+  rank: number;
+  tied: boolean; // true when at least one other row shares this rank
+}
+
+function rankLeaderboard(board: LeaderboardRow[], useTimeTiebreak: boolean): RankedRow[] {
+  const out: RankedRow[] = [];
+  for (let i = 0; i < board.length; i++) {
+    const cur = board[i];
+    const prev = i > 0 ? board[i - 1] : null;
+    // In stopwatch mode, total_time_ms also factors into the rank — fastest
+    // wins a score tie, so two rows are "truly tied" only when score, correct,
+    // AND time all match. In other modes, just score + correct_count.
+    const sameAsPrev =
+      prev !== null &&
+      prev.total_score === cur.total_score &&
+      prev.correct_count === cur.correct_count &&
+      (!useTimeTiebreak || prev.total_time_ms === cur.total_time_ms);
+    const rank = sameAsPrev ? out[i - 1].rank : i + 1;
+    out.push({ row: cur, rank, tied: false });
+  }
+  // Second pass: mark `tied` true for any rank shared by >1 row.
+  const counts = new Map<number, number>();
+  for (const r of out) counts.set(r.rank, (counts.get(r.rank) ?? 0) + 1);
+  for (const r of out) if ((counts.get(r.rank) ?? 0) > 1) r.tied = true;
+  return out;
 }
 
 interface QuestionDetail {
@@ -42,7 +79,8 @@ interface QuestionDetail {
 
 async function getMatch(id: string, userId: string): Promise<MatchView | null> {
   const { rows } = await query<MatchView>(
-    `SELECT c.id AS challenge_id, c.topic, c.num_questions, c.challenger_id
+    `SELECT c.id AS challenge_id, c.topic, c.num_questions, c.challenger_id,
+            c.timer_mode::text AS timer_mode
        FROM challenges c
        JOIN challenge_participants cp ON cp.challenge_id = c.id AND cp.user_id = $2
       WHERE c.id = $1 AND c.status = 'completed'`,
@@ -51,18 +89,28 @@ async function getMatch(id: string, userId: string): Promise<MatchView | null> {
   return rows[0] ?? null;
 }
 
-async function getLeaderboard(challengeId: string): Promise<LeaderboardRow[]> {
+async function getLeaderboard(
+  challengeId: string,
+  useTimeTiebreak: boolean
+): Promise<LeaderboardRow[]> {
+  // In stopwatch mode, ties on (total_score, correct_count) are broken by
+  // total_time_ms ASC (fastest wins). In all other modes, joined_at is just a
+  // stable secondary sort — it does NOT determine winner.
+  const tiebreakSql = useTimeTiebreak
+    ? `r.total_time_ms ASC NULLS LAST, cp.joined_at ASC`
+    : `cp.joined_at ASC`;
   const { rows } = await query<LeaderboardRow>(
     `SELECT
        cp.user_id, u.username, u.display_name, cp.is_challenger,
        COALESCE(r.total_score, 0) AS total_score,
        COALESCE(r.correct_count, 0) AS correct_count,
+       r.total_time_ms,
        (SELECT COUNT(*) FROM attempts a WHERE a.challenge_id = cp.challenge_id AND a.user_id = cp.user_id) AS answered_count
      FROM challenge_participants cp
      JOIN users u ON u.id = cp.user_id
      LEFT JOIN results r ON r.challenge_id = cp.challenge_id AND r.user_id = cp.user_id
      WHERE cp.challenge_id = $1
-     ORDER BY total_score DESC, correct_count DESC, cp.joined_at ASC`,
+     ORDER BY total_score DESC, correct_count DESC, ${tiebreakSql}`,
     [challengeId]
   );
   return rows;
@@ -101,15 +149,20 @@ export default async function ResultsPage({
   const match = await getMatch(id, user.id);
   if (!match) notFound();
 
+  const useTimeTiebreak = match.timer_mode === "stopwatch";
   const [board, breakdown] = await Promise.all([
-    getLeaderboard(id),
+    getLeaderboard(id, useTimeTiebreak),
     getMyBreakdown(id, user.id),
   ]);
 
-  const top = board[0];
-  const myRow = board.find((r) => r.user_id === user.id);
-  const myRank = board.findIndex((r) => r.user_id === user.id) + 1;
-  const youWin = top?.user_id === user.id && board.length > 1;
+  const ranked = rankLeaderboard(board, useTimeTiebreak);
+  const topRow = ranked[0];
+  const winners = ranked.filter((r) => r.rank === 1);
+  const isTopTied = winners.length > 1;
+  const myEntry = ranked.find((r) => r.row.user_id === user.id);
+  const myRank = myEntry?.rank ?? 0;
+  const youAreInTopTie = isTopTied && winners.some((w) => w.row.user_id === user.id);
+  const youWinSolo = !isTopTied && topRow?.row.user_id === user.id && board.length > 1;
   const totalQs = match.num_questions;
 
   return (
@@ -124,7 +177,17 @@ export default async function ResultsPage({
       <header className="text-center space-y-3">
         <Badge variant="secondary">{match.topic}</Badge>
         <h1 className="font-display text-5xl font-extrabold tracking-tighter">
-          {youWin ? (
+          {youAreInTopTie ? (
+            <span className="inline-flex items-center gap-3">
+              <Crown className="size-10 text-primary" />
+              {winners.length === 2 ? "You tied for first!" : `Tied ${winners.length}-way for first!`}
+            </span>
+          ) : isTopTied ? (
+            <span>
+              {winners.length === 2 ? "Tied" : `${winners.length}-way tie`}:{" "}
+              {winners.map((w) => displayName(w.row)).join(" & ")}
+            </span>
+          ) : youWinSolo ? (
             <span className="inline-flex items-center gap-3">
               <Crown className="size-10 text-primary" />
               You win!
@@ -132,12 +195,13 @@ export default async function ResultsPage({
           ) : board.length === 1 ? (
             "Match complete"
           ) : (
-            `${displayName(top)} wins.`
+            `${displayName(topRow.row)} wins.`
           )}
         </h1>
-        {myRow && board.length > 1 && (
+        {myEntry && board.length > 1 && !youAreInTopTie && (
           <p className="text-muted-foreground">
-            You finished {ordinal(myRank)} of {board.length}.
+            You finished {ordinal(myRank)} of {board.length}
+            {myEntry.tied && " (tied)"}.
           </p>
         )}
       </header>
@@ -147,13 +211,15 @@ export default async function ResultsPage({
         <Card>
           <CardContent className="p-0">
             <ol className="divide-y">
-              {board.map((row, idx) => (
+              {ranked.map((entry) => (
                 <LeaderboardItem
-                  key={row.user_id}
-                  row={row}
-                  rank={idx + 1}
-                  isYou={row.user_id === user.id}
+                  key={entry.row.user_id}
+                  row={entry.row}
+                  rank={entry.rank}
+                  tied={entry.tied}
+                  isYou={entry.row.user_id === user.id}
                   total={totalQs}
+                  showTime={useTimeTiebreak}
                 />
               ))}
             </ol>
@@ -211,19 +277,24 @@ export default async function ResultsPage({
 function LeaderboardItem({
   row,
   rank,
+  tied,
   isYou,
   total,
+  showTime,
 }: {
   row: LeaderboardRow;
   rank: number;
+  tied: boolean;
   isYou: boolean;
   total: number;
+  showTime: boolean;
 }) {
   const score = Number(row.total_score);
   const correct = Number(row.correct_count);
   const answered = Number(row.answered_count);
   const initials = (row.display_name ?? row.username).slice(0, 2).toUpperCase();
   const incomplete = answered < total;
+  const timeMs = row.total_time_ms ? Number(row.total_time_ms) : null;
   return (
     <li
       className={cn(
@@ -232,7 +303,7 @@ function LeaderboardItem({
       )}
     >
       <div className="w-8 text-center">
-        <RankBadge rank={rank} />
+        <RankBadge rank={rank} tied={tied} />
       </div>
       <Avatar className="size-10 shrink-0">
         <AvatarFallback
@@ -268,16 +339,54 @@ function LeaderboardItem({
         <p className="text-xs text-muted-foreground mt-1">
           {correct}/{total} correct
         </p>
+        {showTime && timeMs !== null && (
+          <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">
+            {formatTotalTime(timeMs)}
+          </p>
+        )}
       </div>
     </li>
   );
 }
 
-function RankBadge({ rank }: { rank: number }) {
-  if (rank === 1) return <Medal className="size-5 text-primary mx-auto" />;
-  if (rank === 2) return <Medal className="size-5 text-chart-2 mx-auto" />;
-  if (rank === 3) return <Medal className="size-5 text-accent-foreground mx-auto" />;
-  return <span className="text-sm text-muted-foreground font-medium">{rank}</span>;
+function formatTotalTime(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function RankBadge({ rank, tied }: { rank: number; tied: boolean }) {
+  if (rank === 1) {
+    return (
+      <div className="flex flex-col items-center gap-0.5">
+        <Medal className="size-5 text-primary" />
+        {tied && <span className="text-[9px] uppercase tracking-wider font-bold text-primary">T</span>}
+      </div>
+    );
+  }
+  if (rank === 2) {
+    return (
+      <div className="flex flex-col items-center gap-0.5">
+        <Medal className="size-5 text-chart-2" />
+        {tied && <span className="text-[9px] uppercase tracking-wider font-bold text-chart-2">T</span>}
+      </div>
+    );
+  }
+  if (rank === 3) {
+    return (
+      <div className="flex flex-col items-center gap-0.5">
+        <Medal className="size-5 text-accent-foreground" />
+        {tied && <span className="text-[9px] uppercase tracking-wider font-bold">T</span>}
+      </div>
+    );
+  }
+  return (
+    <span className="text-sm text-muted-foreground font-medium">
+      {rank}
+      {tied && <span className="text-[10px] ml-0.5">T</span>}
+    </span>
+  );
 }
 
 function YourAttempt({

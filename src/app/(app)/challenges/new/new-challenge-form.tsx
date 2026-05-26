@@ -31,7 +31,7 @@ const DIFFICULTY_LABELS: Record<number, string> = {
   10: "Obsessive",
 };
 
-type TimerMode = "off" | "per_question" | "total";
+type TimerMode = "off" | "per_question" | "total" | "stopwatch";
 type SizeMode = "open" | "cap";
 
 const PER_QUESTION_DURATIONS = [10, 20, 30, 60] as const;
@@ -81,6 +81,7 @@ export function NewChallengeForm() {
         numQuestions,
         format,
         mode: "async",
+        timerMode,
         timePerQuestionS,
         totalTimeS,
         maxPlayers,
@@ -174,13 +175,16 @@ export function NewChallengeForm() {
                 { value: "off", label: "Off" },
                 { value: "per_question", label: "Per question" },
                 { value: "total", label: "Whole quiz" },
+                { value: "stopwatch", label: "Stopwatch" },
               ]}
               hint={
                 timerMode === "off"
                   ? "No timer — players take as long as they want."
                   : timerMode === "per_question"
                     ? "Each question has its own countdown."
-                    : "One shared clock counts down for the entire quiz."
+                    : timerMode === "total"
+                      ? "One shared clock counts down for the entire quiz."
+                      : "Counts up while you play. No time limit — but ties on the leaderboard are broken by fastest total time."
               }
             />
 

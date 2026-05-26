@@ -52,12 +52,15 @@ async function setPhase(
   );
 }
 
+export type TimerMode = "off" | "per_question" | "total" | "stopwatch";
+
 interface CreateChallengeInput {
   topic: string;
   difficulty: number;
   numQuestions: number;
   format: ChallengeFormat;
   mode: "async" | "live";
+  timerMode: TimerMode;
   timePerQuestionS: number | null;
   totalTimeS: number | null;
   maxPlayers: number | null;
@@ -126,10 +129,10 @@ export async function createChallenge(input: CreateChallengeInput) {
     `INSERT INTO challenges
        (challenger_id, topic, topic_normalized,
         difficulty_requested, num_questions, format, mode,
-        time_per_question_s, total_time_s,
+        timer_mode, time_per_question_s, total_time_s,
         max_players, auto_close_at, invite_token, status,
         generation_phase, generation_phase_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', $13, now())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timer_mode, $9, $10, $11, $12, $13, 'pending', $14, now())
      RETURNING id`,
     [
       user.id,
@@ -139,6 +142,7 @@ export async function createChallenge(input: CreateChallengeInput) {
       input.numQuestions,
       input.format,
       input.mode,
+      input.timerMode,
       input.timePerQuestionS,
       input.totalTimeS,
       input.maxPlayers,
