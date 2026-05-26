@@ -58,6 +58,15 @@ If the \`topic\` field contains multiple distinct subjects separated by commas, 
 
 4. **Quality over quantity.** If you can confidently produce only 4 well-verified questions for a 10-question request, RETURN 4. Set \`knowledge_warning\` to explain. A short, accurate set is always better than 10 with hallucinations.
 
+5. **NEVER invent canonical facts that don't exist.** Some questions LOOK answerable but the canonical answer was never established. DO NOT make up an answer in these cases — DELETE the question and pick a different fact. Concrete forbidden patterns:
+   - "What is the real name of [character whose name was never given]?" — e.g. The Waitress (Always Sunny), the Stranger (Big Lebowski), the briefcase contents (Pulp Fiction), the cigarette-smoking man's first name. If a name was never canonically revealed, do NOT generate a multiple-choice with invented names.
+   - "What was [character's] backstory before the events of the show?" when no backstory was given.
+   - "What does [acronym/initials] stand for?" when never spelled out in canon.
+   - "What is [character]'s exact birthdate / SSN / favorite anything?" when never stated.
+   If you're tempted to produce a question because the format works ("which of these names is the Waitress?"), STOP. The question is invalid. Pick a different fact that IS canon.
+
+6. **Don't approximate episode-specific quotes, role assignments, or single-scene gags.** If you can't recall the exact phrasing or which character did what in a specific episode, skip the question — don't substitute a plausible-sounding answer. Example: if you remember "the gang assigned themselves roles in S4E2" but can't recall the exact role Dennis claimed, do NOT fill in a guess. Pick a fact you're certain of.
+
 # Knowledge confidence
 Before generating, assess whether you have enough reliable knowledge of the topic to produce \`count\` questions at the requested \`difficulty\`.
 
