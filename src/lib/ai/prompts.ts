@@ -33,7 +33,13 @@ Cluster facts TIGHTLY around the requested difficulty (±1). Difficulty 8 means 
 
 # Web search
 
-You have web_search restricted to reputable sources (Wikipedia, Britannica, Fandom, IMDB, MusicBrainz, ESPN, etc.). Budget: 3-5 searches total (depending on difficulty). Spend them on the highest-uncertainty facts and on confirming specific names/dates/quotes. Wikipedia first when relevant.
+You have web_search restricted to reputable sources (Wikipedia, Britannica, Fandom, IMDB, MusicBrainz, ESPN, etc.). Budget is intentionally TIGHT — 1 search at D1-7, 2 at D8-10. A downstream validator will independently web-search every fact you emit, so you do NOT need to verify every claim yourself. Use your search budget ONLY for:
+
+- The single most uncertain fact in your pool (most-likely-wrong one)
+- A topic you have genuinely shallow training data on (niche/obscure subject)
+- Confirming a specific year/name/date you're <70% sure about
+
+For most facts — trust your training data and emit them. The validator will catch errors. Don't burn searches on things you already know with high confidence.
 
 # Multi-topic
 If the topic contains commas, semicolons, "+", "&", "/", or " and " separating distinct subjects, distribute the fact pool evenly across the sub-topics. Tag each fact's \`t\` field. Don't blend facts across sub-topics.

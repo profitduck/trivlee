@@ -41,18 +41,26 @@ export const WEB_SEARCH_ALLOWED_DOMAINS = [
 ];
 
 /**
- * Difficulty-aware web search budgets for the 3-stage pipeline. The model
- * self-rations searches when confident, so common-topic generations rarely
- * use the full budget anyway. Trimming caps for D1-7 (most matches) saves
- * both the per-search fee ($0.01) and the input tokens for returned page
- * content (~1.5-3K tokens per result). D8-10 keeps the full budget because
- * niche/obscure facts genuinely need more lookups.
+ * Difficulty-aware web search budgets for the 3-stage pipeline.
  *
- * Token cost dominates: at D1-7 the savings come almost entirely from
- * fewer pages of search content flowing into the conversation as input.
+ * The researcher's budget is small on purpose: the validator runs an
+ * independent web-search pass on every fact, so most of the researcher's
+ * lookup work would be redundant. The researcher's training data is good
+ * enough for common topics; we give it 1 search at D1-7 and 2 at D8-10 as
+ * an escape hatch for niche/obscure subjects where Sonnet's training data
+ * is shallow.
+ *
+ * The validator gets the real search budget — that's where independent
+ * verification happens, including the Q9-style embellishment catch:
+ * search the EXACT phrase the claim states; if the underlying event is
+ * documented but the specific detail isn't, mark unverified.
+ *
+ * Token cost dominates each search call (~1.5-3K tokens of page content
+ * returned as fresh input), so a lower cap saves both the per-search fee
+ * AND those input tokens — typically ~5-10s of wall time per cut search.
  */
 export function researcherSearchTool(difficulty: number) {
-  const max_uses = difficulty >= 8 ? 5 : 3;
+  const max_uses = difficulty >= 8 ? 2 : 1;
   return {
     type: "web_search_20260209" as const,
     name: "web_search" as const,
