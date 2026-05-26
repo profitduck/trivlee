@@ -130,6 +130,11 @@ try {
             `${autoHide ? " hidden" : ""} - ${row.topic_normalized}: ${row.question_text}`
         );
       } catch (err) {
+        if (isLowCreditError(err)) {
+          throw new Error(
+            "Anthropic credit balance is too low; stopping without marking remaining rows."
+          );
+        }
         const summary = summarizeError(err);
         await saveResult(
           row.id,
@@ -166,7 +171,7 @@ try {
 async function getCandidates() {
   const filters = [];
   if (!recheck) {
-    filters.push("(fact_check_verdict = 'pending' OR fact_checked_at IS NULL)");
+    filters.push("(fact_check_verdict IN ('pending', 'error') OR fact_checked_at IS NULL)");
   }
   if (skipHidden) {
     filters.push("hidden = false");
@@ -207,6 +212,7 @@ async function factCheck(client, row) {
   try {
     return await callFactChecker(client, row, !noSearch);
   } catch (err) {
+    if (isLowCreditError(err)) throw err;
     if (noSearch) throw err;
     console.warn(`Search fact check failed for ${row.id}; retrying without search: ${summarizeError(err)}`);
     return callFactChecker(client, row, false);
@@ -390,4 +396,14 @@ function summarizeError(err) {
     return err.message.slice(0, 280);
   }
   return "Unknown error";
+}
+
+function isLowCreditError(err) {
+  if (err instanceof Anthropic.APIError) {
+    return /credit balance is too low/i.test(err.message);
+  }
+  if (err instanceof Error) {
+    return /credit balance is too low/i.test(err.message);
+  }
+  return false;
 }
