@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Check, X, Clock, Hourglass, ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { Check, X, Clock, Hourglass, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -228,7 +228,7 @@ export function PlayCard(props: PlayCardProps) {
             <div className="grid gap-2">
               {props.options.map((opt, idx) => (
                 <Button
-                  key={opt}
+                  key={`${idx}:${opt}`}
                   variant="outline"
                   size="lg"
                   className={cn(

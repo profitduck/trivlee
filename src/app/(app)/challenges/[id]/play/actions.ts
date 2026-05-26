@@ -79,7 +79,13 @@ export async function submitAnswer(
   // Grade
   const grade =
     q.per_question_format === "multiple_choice"
-      ? gradeMultipleChoice(userAnswer, q.correct_answer)
+      ? await gradeMultipleChoiceWithFallback({
+          question: q.question_text,
+          correctAnswer: q.correct_answer,
+          aliases: q.answer_aliases ?? [],
+          distractors: q.distractors ?? [],
+          userAnswer,
+        })
       : await gradeFreeText({
           question: q.question_text,
           correctAnswer: q.correct_answer,
@@ -164,4 +170,29 @@ export async function submitAnswer(
     sourceHint: q.source_hint,
     isLast: myDone,
   };
+}
+
+interface MultipleChoiceGradeInput {
+  question: string;
+  correctAnswer: string;
+  aliases: string[];
+  distractors: string[];
+  userAnswer: string;
+}
+
+async function gradeMultipleChoiceWithFallback(
+  input: MultipleChoiceGradeInput
+): Promise<GradeResult> {
+  const mcGrade = gradeMultipleChoice(input.userAnswer, input.correctAnswer);
+  if (mcGrade.isCorrect) return mcGrade;
+
+  // If the UI had to render a malformed historical MC row as free text, the
+  // submitted answer will not be one of the options. Grade that typed answer
+  // with the normal free-text path so aliases and typo tolerance still work.
+  const options = [input.correctAnswer, ...input.distractors];
+  if (!options.includes(input.userAnswer)) {
+    return gradeFreeText(input);
+  }
+
+  return mcGrade;
 }

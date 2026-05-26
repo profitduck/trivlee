@@ -22,6 +22,8 @@ interface NextQuestion {
   per_question_format: string;
 }
 
+type RenderFormat = "multiple_choice" | "free_text";
+
 async function getNextQuestion(
   challengeId: string,
   userId: string
@@ -133,11 +135,17 @@ export default async function PlayPage({
   // Shuffle distractors with correct answer for MC. Deterministic per question
   // so reloading the page doesn't reshuffle.
   let options: string[] | null = null;
+  let renderFormat: RenderFormat = next.per_question_format as RenderFormat;
   if (next.per_question_format === "multiple_choice") {
-    options = shuffleDeterministic(
-      [next.correct_answer, ...next.distractors],
-      next.question_id
-    );
+    const candidateOptions = [next.correct_answer, ...next.distractors];
+    if (hasValidMultipleChoiceOptions(candidateOptions)) {
+      options = shuffleDeterministic(candidateOptions, next.question_id);
+    } else {
+      console.warn(
+        `[play] falling back to free text for malformed MC question ${next.question_id}`
+      );
+      renderFormat = "free_text";
+    }
   }
 
   return (
@@ -150,7 +158,7 @@ export default async function PlayPage({
         position={next.position}
         total={next.num_questions}
         questionText={next.question_text}
-        perQuestionFormat={next.per_question_format as "multiple_choice" | "free_text"}
+        perQuestionFormat={renderFormat}
         timeLimitS={next.time_per_question_s}
         totalDeadlineMs={totalDeadlineMs}
         stopwatchStartedMs={stopwatchStartedMs}
@@ -158,6 +166,23 @@ export default async function PlayPage({
       />
     </div>
   );
+}
+
+function normalizeOptionForKey(option: string): string {
+  return option
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasValidMultipleChoiceOptions(options: string[]): boolean {
+  if (options.length !== 4) return false;
+  const normalized = options.map(normalizeOptionForKey);
+  return normalized.every((option) => option.length > 0) &&
+    new Set(normalized).size === normalized.length;
 }
 
 function shuffleDeterministic<T>(arr: T[], seed: string): T[] {

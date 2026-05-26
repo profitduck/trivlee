@@ -72,6 +72,26 @@ function looksLikeLengthGiveaway(correctAnswer: string, distractors: string[]): 
   return correctAnswer.length >= avg * 1.4 && correctAnswer.length - longest >= 10;
 }
 
+// Broad dialogue prompts produce unfair MC when distractors are also real
+// catchphrases or lines. Prefer free text for these; otherwise a player can
+// reasonably argue multiple options are technically correct.
+const BROAD_DIALOGUE_PROMPT =
+  /\b(catchphrase|greeting|slogan|recurring (line|phrase)|used to (express|show|mean)|repeatedly (says|uses|greets?|utters?))\b/i;
+
+function looksLikeUtteranceOption(option: string): boolean {
+  const trimmed = option.trim();
+  if (/[!?]/.test(trimmed)) return true;
+  if (/^["'“”‘’].+["'“”‘’]$/.test(trimmed)) return true;
+  return /^\w[\w' -]{2,30}$/.test(trimmed) && trimmed.split(/\s+/).length >= 2;
+}
+
+function looksLikeAmbiguousDialogueMc(q: GeneratedQuestion): boolean {
+  if (q.per_question_format !== "multiple_choice") return false;
+  if (!BROAD_DIALOGUE_PROMPT.test(q.question)) return false;
+  const utteranceOptions = [q.correct_answer, ...q.distractors].filter(looksLikeUtteranceOption);
+  return utteranceOptions.length >= 2;
+}
+
 // ─── Answer-in-question detector ───────────────────────────────────────────
 // "Which character does Elaine work for at the J. Peterman catalog?" → "J. Peterman"
 // The answer is literally a substring of the question; the player just reads it off.
@@ -223,6 +243,9 @@ export function checkQuestion(q: GeneratedQuestion): {
   ) {
     return { ok: false, reason: "length giveaway — correct answer much longer than distractors" };
   }
+  if (looksLikeAmbiguousDialogueMc(q)) {
+    return { ok: false, reason: "ambiguous dialogue/catchphrase multiple-choice question" };
+  }
   return { ok: true };
 }
 
@@ -245,5 +268,6 @@ export {
   looksLikeTrickAnswer,
   looksLikeLengthGiveaway,
   looksLikeAnswerInQuestion,
+  looksLikeAmbiguousDialogueMc,
   looksGroundedInFact,
 };

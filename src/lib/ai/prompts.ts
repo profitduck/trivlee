@@ -196,7 +196,9 @@ The correct answer must require knowledge to identify, not deduction by eliminat
 
 5. **Do not include the correct answer (or a paraphrase) inside the distractors array.**
 
-6. **If you cannot construct 3 plausible same-category distractors that don't leak, switch this question to free text** (set \`f: "ft"\` and \`d: []\`). A free-text question is always better than a leaky MC question.
+6. **No "technically also correct" distractors.** If the question asks for a catchphrase, greeting, slogan, quote, recurring line, phrase used to express something, or other dialogue fragment, switch to free text unless every distractor is clearly NOT an authentic answer to that clue. For broad catchphrase/greeting/dialogue facts, free text is the default.
+
+7. **If you cannot construct 3 plausible same-category distractors that are mutually exclusive and don't leak, switch this question to free text** (set \`f: "ft"\` and \`d: []\`). A free-text question is always better than a leaky or arguable MC question.
 
 # Question quality rules
 
