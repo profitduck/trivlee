@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Swords, LogOut, ShieldCheck } from "lucide-react";
+import { Swords, LogOut, ShieldCheck, Trophy } from "lucide-react";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import type { SessionUser } from "@/lib/auth";
@@ -19,6 +19,12 @@ export function SiteHeader({ user }: { user: SessionUser }) {
           </span>
         </Link>
         <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" asChild className="gap-1.5">
+            <Link href="/leaderboard">
+              <Trophy className="size-4" />
+              <span className="hidden sm:inline">Leaderboard</span>
+            </Link>
+          </Button>
           {user.is_admin && (
             <Button variant="ghost" size="sm" asChild className="gap-1.5">
               <Link href="/admin">

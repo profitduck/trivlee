@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight, AlertTriangle } from "lucide-react";
+import { Plus, Inbox, Trophy, Users, MailOpen, ArrowRight, AlertTriangle, Target, Flame, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,86 @@ interface ChallengeRow {
   challenger_username: string | null;
   /** Non-null while generation is in flight; "failed:..." after the stuck-sweep flips it. */
   generation_phase: string | null;
+}
+
+interface LifetimeStats {
+  total_points: number;
+  matches_played: number;
+  wins: number;
+  accuracy_pct: number;
+  global_rank: number | null;
+}
+
+/**
+ * Compute the user's lifetime stats and their global rank in a single query.
+ * Rank is calculated from total_points and uses RANK() so ties share a rank.
+ */
+async function getLifetimeStats(userId: string): Promise<LifetimeStats> {
+  const { rows } = await query<{
+    total_points: string;
+    correct: string;
+    answered: string;
+    matches_played: string;
+    wins: string;
+    global_rank: string | null;
+  }>(
+    `WITH per_user AS (
+       SELECT
+         u.id,
+         COALESCE(SUM(r.total_score), 0)::numeric AS pts,
+         COUNT(r.challenge_id)::int AS matches_played,
+         COALESCE(SUM(r.correct_count), 0)::int AS correct,
+         (SELECT COUNT(*) FROM attempts a
+            WHERE a.user_id = u.id AND a.user_answer IS NOT NULL) AS answered,
+         (
+           SELECT COUNT(*) FROM results r2
+             JOIN results other ON other.challenge_id = r2.challenge_id
+            WHERE r2.user_id = u.id
+              AND other.total_score >= r2.total_score
+              AND (SELECT COUNT(*) FROM results r3 WHERE r3.challenge_id = r2.challenge_id) > 1
+              AND r2.total_score = (SELECT MAX(total_score) FROM results r4 WHERE r4.challenge_id = r2.challenge_id)
+            GROUP BY r2.challenge_id
+         ) AS wins_count
+       FROM users u
+       LEFT JOIN results r ON r.user_id = u.id
+       GROUP BY u.id
+     ),
+     ranks AS (
+       SELECT id, RANK() OVER (ORDER BY pts DESC) AS rnk
+         FROM per_user
+        WHERE matches_played > 0
+     )
+     SELECT
+       pu.pts        AS total_points,
+       pu.correct    AS correct,
+       pu.answered   AS answered,
+       pu.matches_played,
+       (SELECT COUNT(*)
+          FROM results r2
+          JOIN results other ON other.challenge_id = r2.challenge_id
+         WHERE r2.user_id = pu.id
+           AND r2.total_score = (SELECT MAX(total_score) FROM results r4 WHERE r4.challenge_id = r2.challenge_id)
+           AND (SELECT COUNT(*) FROM results r3 WHERE r3.challenge_id = r2.challenge_id) > 1
+        )::int AS wins,
+       r.rnk::int AS global_rank
+     FROM per_user pu
+     LEFT JOIN ranks r ON r.id = pu.id
+     WHERE pu.id = $1`,
+    [userId]
+  );
+  const row = rows[0];
+  if (!row) {
+    return { total_points: 0, matches_played: 0, wins: 0, accuracy_pct: 0, global_rank: null };
+  }
+  const correct = Number(row.correct);
+  const answered = Number(row.answered);
+  return {
+    total_points: Number(row.total_points),
+    matches_played: Number(row.matches_played),
+    wins: Number(row.wins),
+    accuracy_pct: answered > 0 ? Math.round((correct / answered) * 100) : 0,
+    global_rank: row.global_rank ? Number(row.global_rank) : null,
+  };
 }
 
 async function getMyChallenges(userId: string): Promise<ChallengeRow[]> {
@@ -57,9 +137,10 @@ export default async function DashboardPage() {
     failStuckGenerationsForUser(user.id),
     sweepAutoCloseForUser(user.id),
   ]);
-  const [challenges, pendingInvites] = await Promise.all([
+  const [challenges, pendingInvites, stats] = await Promise.all([
     getMyChallenges(user.id),
     getPendingInvites(user.id),
+    getLifetimeStats(user.id),
   ]);
 
   // Stuck/failed matches are status='cancelled' AND generation_phase starts with
@@ -92,6 +173,52 @@ export default async function DashboardPage() {
           </Link>
         </Button>
       </section>
+
+      {stats.matches_played > 0 && (
+        <section>
+          <Link href="/leaderboard" className="block group">
+            <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-card to-card transition hover:border-primary/40 hover:shadow-lg">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+                    Your stats
+                  </p>
+                  <span className="text-xs text-primary group-hover:underline inline-flex items-center gap-1">
+                    Leaderboard <ArrowRight className="size-3" />
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <StatPill
+                    icon={<Crown className="size-4" />}
+                    label="Points"
+                    value={stats.total_points.toFixed(0)}
+                  />
+                  <StatPill
+                    icon={<Trophy className="size-4" />}
+                    label="Wins"
+                    value={String(stats.wins)}
+                  />
+                  <StatPill
+                    icon={<Target className="size-4" />}
+                    label="Accuracy"
+                    value={`${stats.accuracy_pct}%`}
+                  />
+                  <StatPill
+                    icon={<Flame className="size-4" />}
+                    label="Matches"
+                    value={String(stats.matches_played)}
+                  />
+                </div>
+                {stats.global_rank !== null && (
+                  <p className="mt-3 pt-3 border-t text-xs text-muted-foreground">
+                    Currently ranked <strong className="text-foreground">#{stats.global_rank}</strong> globally.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </Link>
+        </section>
+      )}
 
       <section className="grid gap-6 md:grid-cols-3">
         <StatCard
@@ -193,6 +320,31 @@ function StatCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Compact stat tile for the lifetime-stats card. Different shape from
+ * StatCard — denser, no card chrome, intended for use inside the gradient
+ * highlight card.
+ */
+function StatPill({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+        {icon}
+        {label}
+      </span>
+      <p className="font-display text-2xl font-bold leading-none tabular-nums">{value}</p>
+    </div>
   );
 }
 
