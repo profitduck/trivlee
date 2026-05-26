@@ -16,7 +16,9 @@
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
     "promote-admin": "node --env-file=.env.local scripts/promote-admin.mjs",
     "db:migrate:prod": "node scripts/migrate.mjs",
-    "db:seed": "node --env-file=.env.local scripts/seed.mjs"
+    "db:seed": "node --env-file=.env.local scripts/seed.mjs",
+    "fact-check:bank": "node --env-file=.env.local scripts/fact-check-bank.mjs",
+    "fact-check:bank:prod": "node scripts/fact-check-bank.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
