@@ -7,7 +7,6 @@ import {
   Sparkles,
   Search,
   ShieldCheck,
-  PencilLine,
   Database,
   Check,
   Loader2,
@@ -17,6 +16,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+// Phases visible in the UI. The server may also emit "writing" briefly but
+// in the speculative-writer pipeline that work runs in parallel with
+// validation, so the UI collapses both into one "verifying" step.
 type Phase = "starting" | "researching" | "validating" | "writing" | "saving";
 
 interface PhaseResponse {
@@ -25,7 +27,7 @@ interface PhaseResponse {
   error?: string;
 }
 
-const PHASE_ORDER: Phase[] = ["researching", "validating", "writing", "saving"];
+const PHASE_ORDER: Phase[] = ["researching", "validating", "saving"];
 
 const PHASE_COPY: Record<Phase, { label: string; description: string }> = {
   starting: {
@@ -37,12 +39,12 @@ const PHASE_COPY: Record<Phase, { label: string; description: string }> = {
     description: "Gathering source-able claims about your topic.",
   },
   validating: {
-    label: "Validating facts",
-    description: "Cross-checking each claim against reputable sources.",
+    label: "Verifying & writing",
+    description: "Cross-checking facts and drafting questions in parallel.",
   },
   writing: {
-    label: "Writing questions",
-    description: "Constructing questions from verified facts only.",
+    label: "Verifying & writing",
+    description: "Cross-checking facts and drafting questions in parallel.",
   },
   saving: {
     label: "Saving match",
@@ -127,7 +129,12 @@ export function GenerationProgress({
     return <FailedCard error={state.error ?? "Something went wrong."} />;
   }
 
-  const activePhase: Phase = state.phase === null ? "saving" : (state.phase as Phase);
+  // Normalize "writing" → "validating" for the UI. The speculative-writer
+  // pipeline runs them in parallel; we collapse both into one user-visible
+  // step. (The server may still emit "writing" for in-flight legacy matches
+  // during a deploy.)
+  const rawPhase = state.phase ?? "saving";
+  const activePhase: Phase = rawPhase === "writing" ? "validating" : (rawPhase as Phase);
   const cleanTopic = topic.trim() || "your topic";
 
   return (
@@ -236,7 +243,7 @@ const ICONS: Record<Phase, React.ComponentType<{ className?: string }>> = {
   starting: Sparkles,
   researching: Search,
   validating: ShieldCheck,
-  writing: PencilLine,
+  writing: ShieldCheck, // collapsed into the "validating" UI step
   saving: Database,
 };
 

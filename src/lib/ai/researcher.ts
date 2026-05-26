@@ -84,23 +84,31 @@ function normalizeResearch(
   }
   const r = raw as Record<string, unknown>;
 
+  // Compact format uses short field names. Fall back to long names so we don't
+  // break if the model emits the older format during a partial rollout.
   const topic_interpretation =
-    typeof r.topic_interpretation === "string"
-      ? r.topic_interpretation
-      : `Interpreted as: ${req.topic}`;
-  const topic_safe = typeof r.topic_safe === "boolean" ? r.topic_safe : true;
-  const rejection_reason =
-    typeof r.rejection_reason === "string" && r.rejection_reason.trim().length > 0
-      ? r.rejection_reason
-      : null;
-  const difficulty_delivered =
-    typeof r.difficulty_delivered === "number"
-      ? clampDifficulty(r.difficulty_delivered)
-      : req.difficulty;
-  const knowledge_warning =
-    typeof r.knowledge_warning === "string" && r.knowledge_warning.trim().length > 0
-      ? r.knowledge_warning
-      : null;
+    typeof r.interp === "string"
+      ? r.interp
+      : typeof r.topic_interpretation === "string"
+        ? r.topic_interpretation
+        : `Interpreted as: ${req.topic}`;
+  const topic_safe =
+    typeof r.safe === "boolean"
+      ? r.safe
+      : typeof r.topic_safe === "boolean"
+        ? r.topic_safe
+        : true;
+  const rejStr = typeof r.rej === "string" ? r.rej : typeof r.rejection_reason === "string" ? r.rejection_reason : null;
+  const rejection_reason = rejStr && rejStr.trim().length > 0 ? rejStr : null;
+  const diffNum =
+    typeof r.diff === "number"
+      ? r.diff
+      : typeof r.difficulty_delivered === "number"
+        ? r.difficulty_delivered
+        : req.difficulty;
+  const difficulty_delivered = clampDifficulty(diffNum);
+  const warnStr = typeof r.warn === "string" ? r.warn : typeof r.knowledge_warning === "string" ? r.knowledge_warning : null;
+  const knowledge_warning = warnStr && warnStr.trim().length > 0 ? warnStr : null;
 
   const rawFacts = Array.isArray(r.facts) ? r.facts : [];
   const facts: FactCandidate[] = rawFacts
@@ -124,20 +132,19 @@ function normalizeResearch(
 function normalizeFact(raw: unknown): FactCandidate | null {
   if (!raw || typeof raw !== "object") return null;
   const f = raw as Record<string, unknown>;
-  if (typeof f.claim !== "string" || f.claim.trim().length === 0) return null;
-  if (typeof f.source !== "string" || f.source.trim().length === 0) return null;
-  const suggested_difficulty =
-    typeof f.suggested_difficulty === "number"
-      ? clampDifficulty(f.suggested_difficulty)
-      : 5;
+  // Compact format: {c, s, d, t}. Long format: {claim, source, suggested_difficulty, sub_topic}.
+  const claim = typeof f.c === "string" ? f.c : typeof f.claim === "string" ? f.claim : null;
+  const source = typeof f.s === "string" ? f.s : typeof f.source === "string" ? f.source : null;
+  if (!claim || claim.trim().length === 0) return null;
+  if (!source || source.trim().length === 0) return null;
+  const diffRaw =
+    typeof f.d === "number" ? f.d : typeof f.suggested_difficulty === "number" ? f.suggested_difficulty : 5;
+  const subTopic = typeof f.t === "string" ? f.t : typeof f.sub_topic === "string" ? f.sub_topic : undefined;
   return {
-    claim: f.claim.trim(),
-    source: f.source.trim(),
-    suggested_difficulty,
-    sub_topic:
-      typeof f.sub_topic === "string" && f.sub_topic.trim().length > 0
-        ? f.sub_topic.trim()
-        : undefined,
+    claim: claim.trim(),
+    source: source.trim(),
+    suggested_difficulty: clampDifficulty(diffRaw),
+    sub_topic: subTopic && subTopic.trim().length > 0 ? subTopic.trim() : undefined,
   };
 }
 
