@@ -33,10 +33,50 @@ interface LeaderRow {
   accuracy_pct: number;
 }
 
-async function getGlobalLeaderboard(limit: number): Promise<LeaderRow[]> {
-  // Pull every user with at least one result. Compute wins inside the query
-  // using a correlated subquery — could be optimized with a materialized
-  // view later if this gets slow.
+interface TopicChip {
+  topic_normalized: string;
+  topic_display: string;
+  match_count: number;
+}
+
+/**
+ * Pull the most-played topics so the leaderboard page can show quick-filter
+ * chips. Display name comes from the most recent challenge with that
+ * normalized topic — they're usually identical except for caps/punctuation.
+ */
+async function getTopTopics(limit: number): Promise<TopicChip[]> {
+  const { rows } = await query<{ topic_normalized: string; topic_display: string; match_count: string }>(
+    `SELECT
+       c.topic_normalized,
+       (SELECT topic FROM challenges
+         WHERE topic_normalized = c.topic_normalized
+         ORDER BY created_at DESC LIMIT 1) AS topic_display,
+       COUNT(*)::text AS match_count
+     FROM challenges c
+     JOIN results r ON r.challenge_id = c.id
+     GROUP BY c.topic_normalized
+     ORDER BY COUNT(*) DESC
+     LIMIT $1`,
+    [limit]
+  );
+  return rows.map((r) => ({
+    topic_normalized: r.topic_normalized,
+    topic_display: r.topic_display,
+    match_count: Number(r.match_count),
+  }));
+}
+
+async function getGlobalLeaderboard(
+  limit: number,
+  topicNormalized: string | null
+): Promise<LeaderRow[]> {
+  // When a topic filter is active, restrict the result set to matches on
+  // that exact topic_normalized. Otherwise aggregate over everything.
+  const topicJoin = topicNormalized
+    ? `JOIN challenges c ON c.id = r.challenge_id AND c.topic_normalized = $2`
+    : `JOIN challenges c ON c.id = r.challenge_id`;
+  const params: (string | number)[] = topicNormalized ? [limit, topicNormalized] : [limit];
+
   const { rows } = await query<{
     user_id: string;
     username: string;
@@ -47,9 +87,14 @@ async function getGlobalLeaderboard(limit: number): Promise<LeaderRow[]> {
     matches_played: string;
     wins: string;
   }>(
-    `WITH match_max AS (
+    `WITH scoped_results AS (
+       SELECT r.*
+         FROM results r
+         ${topicJoin}
+     ),
+     match_max AS (
        SELECT challenge_id, MAX(total_score) AS max_score, COUNT(*) AS player_count
-         FROM results
+         FROM scoped_results
         GROUP BY challenge_id
      )
      SELECT
@@ -57,6 +102,7 @@ async function getGlobalLeaderboard(limit: number): Promise<LeaderRow[]> {
        COALESCE(SUM(r.total_score), 0)::numeric AS total_points,
        COALESCE(SUM(r.correct_count), 0)::int  AS correct,
        (SELECT COUNT(*) FROM attempts a
+          ${topicNormalized ? "JOIN challenges c2 ON c2.id = a.challenge_id AND c2.topic_normalized = $2" : ""}
           WHERE a.user_id = u.id AND a.user_answer IS NOT NULL) AS questions_answered,
        COUNT(r.challenge_id)::int AS matches_played,
        SUM(
@@ -66,13 +112,13 @@ async function getGlobalLeaderboard(limit: number): Promise<LeaderRow[]> {
          END
        )::int AS wins
      FROM users u
-     LEFT JOIN results r       ON r.user_id = u.id
+     LEFT JOIN scoped_results r ON r.user_id = u.id
      LEFT JOIN match_max mm    ON mm.challenge_id = r.challenge_id
      GROUP BY u.id, u.username, u.display_name
      HAVING COUNT(r.challenge_id) > 0
      ORDER BY total_points DESC, correct DESC, u.created_at ASC
      LIMIT $1`,
-    [limit]
+    params
   );
   return rows.map((r) => {
     const correct = Number(r.correct);
@@ -91,11 +137,22 @@ async function getGlobalLeaderboard(limit: number): Promise<LeaderRow[]> {
   });
 }
 
-export default async function LeaderboardPage() {
+export default async function LeaderboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ topic?: string }>;
+}) {
   const user = await requireUser();
-  const board = await getGlobalLeaderboard(100);
+  const { topic: topicFilter } = await searchParams;
+  const [board, topics] = await Promise.all([
+    getGlobalLeaderboard(100, topicFilter ?? null),
+    getTopTopics(10),
+  ]);
   const myIdx = board.findIndex((r) => r.user_id === user.id);
   const me = myIdx >= 0 ? board[myIdx] : null;
+  const activeTopic = topicFilter
+    ? topics.find((t) => t.topic_normalized === topicFilter)
+    : null;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -106,7 +163,7 @@ export default async function LeaderboardPage() {
         </Link>
       </Button>
 
-      <header className="space-y-2">
+      <header className="space-y-3">
         <div className="flex items-center gap-2">
           <Trophy className="size-7 text-primary" />
           <h1 className="font-display text-4xl font-extrabold tracking-tighter">
@@ -114,8 +171,46 @@ export default async function LeaderboardPage() {
           </h1>
         </div>
         <p className="text-muted-foreground text-sm">
-          Top players by lifetime points (sum of every match&rsquo;s score).
+          {activeTopic
+            ? <>Top players for <strong className="text-foreground">{activeTopic.topic_display}</strong>.</>
+            : "Top players by lifetime points (sum of every match's score)."}
         </p>
+
+        {(topics.length > 0 || activeTopic) && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            <Link
+              href="/leaderboard"
+              className={cn(
+                "text-xs px-3 py-1.5 rounded-full border transition",
+                topicFilter
+                  ? "border-border bg-card text-muted-foreground hover:text-foreground hover:border-primary/40"
+                  : "border-primary bg-primary text-primary-foreground font-medium"
+              )}
+            >
+              All topics
+            </Link>
+            {topics.map((t) => {
+              const active = t.topic_normalized === topicFilter;
+              return (
+                <Link
+                  key={t.topic_normalized}
+                  href={`/leaderboard?topic=${encodeURIComponent(t.topic_normalized)}`}
+                  className={cn(
+                    "text-xs px-3 py-1.5 rounded-full border transition inline-flex items-center gap-1.5",
+                    active
+                      ? "border-primary bg-primary text-primary-foreground font-medium"
+                      : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-primary/40"
+                  )}
+                >
+                  {t.topic_display}
+                  <span className={cn("text-[10px] tabular-nums", active ? "opacity-80" : "opacity-60")}>
+                    · {t.match_count}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </header>
 
       {me && (
